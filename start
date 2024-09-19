@@ -1,0 +1,12 @@
+# Get the current project directory (PyCharm opens the terminal here by default)
+$projectRoot = Convert-Path .
+
+# Search for the 'activate.ps1' file within the project directory
+$activateScript = Get-ChildItem -Path $projectRoot -Recurse -Filter 'Activate.ps1' | Select-Object -First 1
+
+# If the activate script is found, run it
+if ($activateScript) {
+    & $activateScript.FullName
+} else {
+    Write-Host "Activate.ps1 not found in the project directory."
+}

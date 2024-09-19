@@ -1,0 +1,16 @@
+git+https://github.com/PyPSA/PyPSA.git
+pandapower[all]
+numpy
+pandas
+seaborn
+gurobipy
+scipy
+pypower
+numba
+matplotlib
+grid2op
+geopy
+geopandas
+statsmodels
+scikit-learn
+xgboost
