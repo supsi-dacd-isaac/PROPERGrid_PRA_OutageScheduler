@@ -1,24 +1,9 @@
 import os
-from pathlib import Path
-import logging
 import json
 import pandas as pd
-import numpy as np
+from utils.utils import *
 from scipy.io import loadmat
 import pandapower.networks as networks
-
-
-# ANSI escape code for colored text
-blue_c, green_c, purple_c, cyan_c, red_c, gray_c = "\033[94m", "\033[92m", "\033[95m", "\033[96m", "\033[91m", " "
-bold_c, underline_c, reset_c = "\033[1m", "\033[4m", "\033[0m"
-
-logger = logging.getLogger()
-logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO)
-
-
-def get_project_root() -> Path:
-    """get project root path"""
-    return Path(__file__).parent.parent
 
 
 def load_json(file_path):
@@ -65,4 +50,4 @@ def data_loader(conf_path: str):
     conf = load_json(conf_path)
     panda_power_network = load_network(conf)
     df_hourly_nodal_demand = load_matlab_data(conf)
-    return panda_power_network, df_hourly_nodal_demand
+    return panda_power_network, df_hourly_nodal_demand, conf

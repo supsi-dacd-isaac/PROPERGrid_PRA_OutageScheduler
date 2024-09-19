@@ -1,13 +1,18 @@
 import numpy as np
-from scipy.stats import norm
-from statsmodels.distributions.copula.api import (CopulaDistribution, GumbelCopula, IndependenceCopula)
+# from scipy.stats import norm
+# from statsmodels.distributions.copula.api import (CopulaDistribution, GumbelCopula, IndependenceCopula)
 from scipy.stats import ecdf as ECDF
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
 from colorama import Fore, Back, Style
 from scipy.stats import multivariate_normal
+from utils.utils import *
 import pandas as pd
-
+from abc import ABC, abstractmethod
+import pickle
+import joblib
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
 
 class Demand_sampler:
     """ demand sampler class
@@ -69,111 +74,135 @@ class Demand_sampler:
         return P, Q
 
 
-class ProbabilisticModel:
-    """abstract class for the probability load demand model"""
-    def __init__(self, name: str = 'abstract class for the probabilistic model'):
+class ProbabilisticModel(ABC):
+    """Abstract base class for the probabilistic load demand model"""
+    def __init__(self, name: str = 'Abstract probabilistic model', **kwargs):
         self.name = name
 
-    def sample(self, num_samples: int):
-        P, Q = np.zeros(num_samples), np.zeros(num_samples)
-        return P, Q
-
-    def fit(self, data):
+    @abstractmethod
+    def sample(self, x, num_samples: int):
+        """Method to sample probabilistic predictions"""
         pass
 
+    @abstractmethod
+    def predict(self, x):
+        """Method to predict"""
+        pass
 
-class ProbNodalLoad:
-    """ probabilistic model for the nodal demand (vertical loads)"""
-    def __init__(self,
-                 net=None, window_size_x: int = 24, window_size_y: int = 6, model_class=None):
+    @abstractmethod
+    def fit_marginals(self, x):
+        """Method to fit the model"""
+        pass
+
+    def save(self, filepath):
+        """Save the trained model to a file"""
+        with open(filepath, 'wb') as f:
+            joblib.dump(self, f)
+        print(f'Model saved to {filepath}')
+
+    @classmethod
+    def load(cls, filepath):
+        """Load the model from a file"""
+        with open(filepath, 'rb') as f:
+            loaded_model = joblib.load(f)
+        print(f'Model loaded from {filepath}')
+        return loaded_model
+
+
+class Probability_model_nodal_load(ProbabilisticModel):
+    """Probabilistic model for nodal demand (vertical loads)"""
+
+    def __init__(self, net=None, window_size_past_x: int = 24, horizon_prediction_steps: int = 6, model_class=None,
+                 **kwargs):
+        super().__init__(**kwargs)
         self.name = 'Nodal load forecaster'
         if net is not None:
             self.reference_P_mw = net.load['p_mw']
             self.reference_Q_mvar = net.load['q_mvar']
+            self.n_predictors = len(net.bus)
+        else:
+            logger.warning(f'Network model not provided')
+            self.reference_P_mw = None
+            self.reference_Q_mvar = None
+            self.n_nodes = None
+
         if model_class is None:
-            print('model_class is None. Using XGBRegressor as nodal load forecaster')
+            logger.info('model_class is None. Using XGBRegressor as nodal load forecaster')
             self.model_class = XGBRegressor
         else:
             self.model_class = model_class
-        self.window_size_x = window_size_x
-        self.window_size_y = window_size_y
-        self.marginal_models, self.residual_ECDFs, self.ErrorCovariances= None, None, None
 
-    def preprocess_nodal_load_data(self, nodal_data, use_time_indices: bool = False,
-                                   load_id: int = 0,  test_size: float = 0.2):
-        """ preprocess data for load_id"""
-        X, y = [], []
-        test_size = min(max(test_size, 0.05), .95)
-        hour_id = np.array([np.linspace(0, 23, 24) for _ in range(364)]).flatten()
-        day_id = np.array([[np.linspace(i, i, 24) for i in range(7)] for _ in range(52)]).flatten()
-        for j in range(self.window_size_x, nodal_data.shape[1] - self.window_size_y):
-            if use_time_indices:
-                X_t = np.hstack([nodal_data[load_id, j - self.window_size_x:j], hour_id[j], day_id[j]])
-            else:
-                X_t = nodal_data[load_id, j - self.window_size_x:j]
-            y_t = nodal_data[load_id, j:self.window_size_y + j]
-            X.append(X_t)
-            y.append(y_t)
-        X = np.array(X)
-        y = np.array(y)
-        return train_test_split(X, y, test_size=test_size)
+        self.window_size_x = window_size_past_x
+        self.window_size_y = horizon_prediction_steps
+        self.marginal_models, self.residual_ECDFs, self.ErrorCovariances = None, None, None
 
-    def fit_marginal_injection_models(self, nodal_demand_data):
-        """
-        Function to forecast marginal loads using historical data.
-        Parameters:
-        - nodal_injections_data: numpy array of shape (n_loads, n_hours)
-        - window_size_x: Size of the past loads for forecasting
-        - window_size_y: Size of the prediction window for forecasting
-        Returns:
-        - marginal_models: LIST with n_loads marginal forecasters (predict y_expected load)
-        - marginal_residual_ecdfs: LIST with empirical-cdf for the prediction residuals (y_pred () + q() probability model)
-        NOTE:
-        - marginal_models predict the nodal loads [y_expected = f(x)]
-        - marginal_residual_ecdfs give the probabilistic model [y_expected+ ecdf(x) ]
-        """
-        n_marginal_predictors = len(nodal_demand_data)
-        marginal_models, residual_ecdfs, residuals_list = [], [], []
-        for ld_i in range(n_marginal_predictors):
-            print(f'prepare training data for the node: {ld_i + 1}/{n_marginal_predictors}')
-            X_tr, X_te, y_tr, y_te = self.preprocess_nodal_load_data(nodal_data=nodal_demand_data, load_id=ld_i)
-            """fit predictor"""
-            print(f'training model....')
+    def fit_marginals_non_parallel(self, nodal_demand_data):
+        """Fit marginal models for nodal demand forecasting"""
+        assert self.n_predictors == len(nodal_demand_data)
+        marginal_models, residual_ECDFs, residuals_list = [], [], []
+        for ld_i in range(self.n_predictors):
+            logger.info(f'Preparing training data for node: {ld_i + 1}/{self.n_predictors}')
+            X_tr, X_te, y_tr, y_te = preprocess_nodal_load_data(nodal_data=nodal_demand_data, load_id=ld_i,
+                                                                window_size_x=self.window_size_x,  window_size_y=self.window_size_y)
             model = self.model_class()
             marginal_models.append(model.fit(X_tr, y_tr))
-            print(f'done.')
-            """simple residual model"""
+            logger.info(f'{blue_c}Fitting completed for node: {ld_i + 1}/{self.n_predictors}{reset_c}')
+            # Calculate residuals and empirical CDF
             errors = marginal_models[ld_i].predict(X_tr) - y_tr
             residuals_list.append(errors)
-            residual_ecdfs.append(ECDF(errors.flatten()))
-        # Store trained model
-        self.marginal_models = marginal_models  # this predicts expectation
-        self.residual_ECDFs = residual_ecdfs   # this samples variability around the expected value
-        Covariances = [pd.DataFrame(res_ld).cov() for res_ld in residuals_list]
-        self.ErrorCovariances = Covariances
-        return marginal_models, residual_ecdfs, Covariances
+            residual_ECDFs.append(ECDF(errors.flatten()))
 
-    def predict(self, X_pred_list):
-        """ predict expected values
-        INPUT:
-        X_pred_list = [X_pred_load_1, X_pred_load_2, ..., X_pred_load_n]
-        OUTPUT:
-        y_pred = [y_pred_1,..., y_pred_n]
-        y_pred_i = [demand_t1, demand_t2,...,demand_tT]_i, T = prediction horizon
-        """
-        y_pred = []
+        self.marginal_models = marginal_models
+        self.residual_ECDFs = residual_ECDFs
+        self.ErrorCovariances = [pd.DataFrame(res_ld).cov() for res_ld in residuals_list]
+        return marginal_models, residual_ECDFs, self.ErrorCovariances
 
+    def fit_marginals(self, x):
+        """Fit marginal models for nodal demand forecasting in parallel"""
+        assert self.n_predictors == len(x)
+
+        marginal_models, residual_ECDFs, error_covariances = [], [], []
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    fit_single_marginal,
+                    ld_i,
+                    x,
+                    self.model_class,
+                    self.window_size_x,
+                    self.window_size_y,
+                    preprocess_nodal_load_data
+                )
+                for ld_i in range(self.n_predictors)
+            ]
+
+            for future in as_completed(futures):
+                model, residual_ECDF, covariance_matrix = future.result()
+                marginal_models.append(model)
+                residual_ECDFs.append(residual_ECDF)
+                error_covariances.append(covariance_matrix)
+
+        # Store trained models and residuals
+        self.marginal_models = marginal_models
+        self.residual_ECDFs = residual_ECDFs
+        self.ErrorCovariances = error_covariances
+
+        return marginal_models, residual_ECDFs, error_covariances
+
+    def predict(self, x):
+        """Predict expected values for future nodal demand"""
+        y = []
         if self.marginal_models is not None:
-            for load_id, model in enumerate(self.marginal_models):
-                y_pred.append(model.predict(X_pred_list[load_id])[0])
+            for load_id, marginal_load_model in enumerate(self.marginal_models):
+                y.append(marginal_load_model.predict(x[load_id])[0])
         else:
             print('Trained nodal load models not found')
-        return y_pred
+        return y
 
-    def sample(self, X_pred_list, n_samples=200):
-        """ random sampler for the nodal injections        """
+    def sample(self, x, n_samples=200):
+        """Random sampler for nodal injections"""
         random_nodal_injection_time_t = []
-        expected_y_pred = self.predict(X_pred_list=X_pred_list)
+        expected_y_pred = self.predict(x=x)
         if self.ErrorCovariances is not None:
             for load_id, cov_mat in enumerate(self.ErrorCovariances):
                 samples_errors = multivariate_normal.rvs(mean=expected_y_pred[load_id] * 0, cov=cov_mat, size=n_samples)
@@ -184,3 +213,37 @@ class ProbNodalLoad:
             print('Trained nodal load models not found')
             return None
 
+
+
+def fit_single_marginal(ld_i, nodal_demand_data, model_class, window_size_x, window_size_y, preprocess_nodal_load_data):
+    """Helper function to fit a model for a single load"""
+    logger.info(f'Preparing training data for node: {ld_i + 1}')
+    X_tr, X_te, y_tr, y_te = preprocess_nodal_load_data(nodal_data=nodal_demand_data, load_id=ld_i,
+                                                        window_size_x=window_size_x, window_size_y=window_size_y)
+    model = model_class()
+    model.fit(X_tr, y_tr)
+    # Calculate residuals and empirical CDF
+    errors = model.predict(X_tr) - y_tr
+    residual_ECDF = ECDF(errors.flatten())
+    covariance_matrix = pd.DataFrame(errors).cov()
+    return model, residual_ECDF, covariance_matrix
+
+
+def preprocess_nodal_load_data(nodal_data, use_time_indices: bool = False, load_id: int = 0,
+                               test_size: float = 0.2, window_size_x: int = 24, window_size_y: int = 12):
+    """Preprocess data for a specific load"""
+    X, y = [], []
+    test_size = min(max(test_size, 0.05), .95)
+    hour_id = np.array([np.linspace(0, 23, 24) for _ in range(364)]).flatten()
+    day_id = np.array([[np.linspace(i, i, 24) for i in range(7)] for _ in range(52)]).flatten()
+    for j in range(window_size_x, nodal_data.shape[1] - window_size_y):
+        if use_time_indices:
+            X_t = np.hstack([nodal_data.iloc[load_id, j - window_size_x:j], hour_id[j], day_id[j]])
+        else:
+            X_t = nodal_data.iloc[load_id, j - window_size_x:j]
+        y_t = nodal_data.iloc[load_id, j:window_size_y + j]
+        X.append(X_t)
+        y.append(y_t)
+    X = np.array(X)
+    y = np.array(y)
+    return train_test_split(X, y, test_size=test_size)
