@@ -35,7 +35,7 @@ def optimization_SCOS_model(data):
     net = data['network']
     outages = data['outages']
     nodal_demand = data['nodal_demand']
-    n_minus1_names = data.get('n_minus1_cases', None)
+    n_minus1_names = data.get('n_minus1_names', None)
 
     reference_bus = data['ref_buses']  # Assuming bus 0 is the reference bus
     num_buses = data['num_buses']
@@ -59,7 +59,6 @@ def optimization_SCOS_model(data):
     branch_susceptance = np.real(PPC_internal['Bf'].A).max(axis=1)
     branch_susceptance = {bn: v for bn, v in zip(branch_names, branch_susceptance)}
 
-
     S_lk = {(l, k): 0 for k in nodes_names for l in branch_names}
     for k in net.bus.index.tolist():
         for l in net.line.index.tolist():
@@ -73,7 +72,6 @@ def optimization_SCOS_model(data):
     # Pre-fetch some values for efficiency
     dic_outage_priority = {o_nam: outages['priorities'][o] for o, o_nam in enumerate(outages['names'])}  # Outage priority
     dic_outage_duration = {o_nam: outages['expected_duration_steps'][o] for o, o_nam in enumerate(outages['names'])}  # Outage expected durations
-    maximum_number_of_maintenance_tasks_t = 3  # arbitrary value for the maximum number of maintenance tasks at time t
 
     # ---- START ---- Prepare the SCOS_model
     # 1. Define the Security-Constrained Outage Scheduling (Mixed Integer Linear Program MILP)
@@ -81,32 +79,22 @@ def optimization_SCOS_model(data):
     SCOS_model = LpProblem(name="Transmission_Outage_Scheduling", sense=LpMaximize)
 
     # 2. Define Variables
-    xt = LpVariable.dicts(name="xt_lines_and_gens",
-                          indices=((t, o) for t in T for o in outages['names']),
-                          cat='Binary')
+    xt = LpVariable.dicts(name="xt_lines_and_gens",  indices=((t, o) for t in T for o in outages['names']), cat='Binary')
     # Generation variables
-    p_t_gen = LpVariable.dicts(name="power_gen_tg", indices=((t, g) for t in T for g in generators_names),
-                               lowBound=0)  # Power generation variables for normal operation
-    p_tn1c_gen = LpVariable.dicts(name="power_gen_tn1c",
-                                  indices=((t, g, c) for t in T for g in generators_names for c in n_minus1_names),
-                                  lowBound=0)  # Power generation variables, unplanned failures
+    p_t_gen = LpVariable.dicts(name="power_gen_tg", indices=((t, g) for t in T for g in generators_names), lowBound=0)  # Power generation variables for normal operation
+    p_tn1c_gen = LpVariable.dicts(name="power_gen_tn1c",  indices=((t, g, c) for t in T for g in generators_names for c in n_minus1_names),  lowBound=0)  # Power generation variables, unplanned failures
 
     # Demand curtailment variables
     d_worst_case = LpVariable(name="worst-case-curtailment", lowBound=0)
-    d_curt_tbc = LpVariable.dicts(name="d_curt_tbc",
-                                  indices=((t, b, c) for t in T for b in nodes_names for c in n_minus1_names),
-                                  lowBound=0)
+    d_curt_tbc = LpVariable.dicts(name="d_curt_tbc",  indices=((t, b, c) for t in T for b in nodes_names for c in n_minus1_names),  lowBound=0)
 
     # Power flow variables
     flow_tl = LpVariable.dicts(name="flow_tl", indices=((t, l) for t in T for l in branch_names))
     flow_tlc = LpVariable.dicts(name="flow_tlc", indices=((t, l, c) for t in T for l in branch_names for c in n_minus1_names))
 
     # Phase angle variables (bounded between -0.3 and 0.3 radians)
-    theta_tb = LpVariable.dicts(name="theta_tb", indices=((t, b) for t in T for b in nodes_names),
-                                lowBound=-0.3, upBound=0.3)
-    theta_tbc = LpVariable.dicts(name="theta_tbc",
-                                 indices=((t, b, c) for t in T for b in nodes_names for c in n_minus1_names),
-                                 lowBound=-0.3, upBound=0.3)
+    theta_tb = LpVariable.dicts(name="theta_tb", indices=((t, b) for t in T for b in nodes_names), lowBound=-0.3, upBound=0.3)
+    theta_tbc = LpVariable.dicts(name="theta_tbc",  indices=((t, b, c) for t in T for b in nodes_names for c in n_minus1_names), lowBound=-0.3, upBound=0.3)
     logger.info(
         f'{blue_c}Variables Added:\n'
         f' - xt: Scheduled outage decisions\n'
@@ -123,22 +111,23 @@ def optimization_SCOS_model(data):
     # 3. Objective Function: Maximize scheduled outages and minimize demand curtailment
     # objective 1) Maximize number of scheduled outages in the planning period T (weighted by priority)
     # objective 2) Minimize the worst-case demand curtailed d_worst_case
-    Objective_fun = [xt[t, o] * dic_outage_priority[o] - 0.01*d_worst_case for t in T for o in outages['names']]
-    SCOS_model += lpSum(Objective_fun), "Maximize_Scheduled_Outages"
 
-    # 4. Constraints in https://www.gerad.ca/fr/papers/G-2023-08.pdf, Appendix A
-    # (25 - 34) constraints maximum number of maintenance tasks, outage duration and continuity constraints
+
+    # Precompute Objective Function Terms
+    Objective_fun = []
+    for t in T:
+        Objective_fun.extend([xt[t, o] * dic_outage_priority[o] for o in outages['names']])
+    Objective_fun.append(-0.01 * d_worst_case)  # Add the curtailment term
+    SCOS_model += lpSum(Objective_fun), "Maximize_Scheduled_Outages"
+    # Objective_fun = [xt[t, o] * dic_outage_priority[o] - 0.01*d_worst_case for t in T for o in outages['names']]
+    # SCOS_model += lpSum(Objective_fun), "Maximize_Scheduled_Outages"
+    # Constraints similarly to https://www.gerad.ca/fr/papers/G-2023-08.pdf, see Appendix A
     for t in T:
         SCOS_model += lpSum([xt[t, o] for o in outages['names']]) <= data['max_number_of_maintenance_tasks'], f"Max_Maintenance_Tasks_{t}"
-
-    for o in outages['names']:
-        # 1. Outage duration must match exactly the expected duration
+    for o in outages['names']: # 1. Outage duration must match exactly the expected duration
         SCOS_model += lpSum([xt[t, o] for t in T]) == dic_outage_duration[o], f"Duration_Constraint_Outage_{o}"
-
-        # 2. Continuity constraint: If an outage starts, it must continue for consecutive steps
-        for t in range(n_planning_steps - 1):
+        for t in range(n_planning_steps - 1):  # 2. Continuity constraint: If an outage starts, it must continue for consecutive steps
             SCOS_model += xt[T[t + 1], o] >= xt[T[t], o], f"Continuity_Constraint_Outage_{o}_{t}"
-
 
     n_constraints_approx = len(T)*(len(generators_names)+ len(branch_names)+ len(nodes_names))*(1+len(n_minus1_names))
     logger.info(f'{blue_c} ADDING CONSTRAINTS FOR EACH TIME STEP: Aproximativelly ~~ {n_constraints_approx} constraints {reset_c}')
@@ -184,7 +173,6 @@ def optimization_SCOS_model(data):
                     SCOS_model += flow_tlc[t, l, c] <= branch_capacity[l], f"Flow_Constraint_{t}_{l}_{c}_up"
                     SCOS_model += flow_tlc[t, l, c] >= -branch_capacity[l], f"Flow_Constraint_{t}_{l}_{c}_low"
 
-
         for b_idx, b in enumerate(nodes_names):  # Add Nodal Power Balance total_Flow = Production - Demand  constraint using DC Power Flow approximation
             demand_tb = nodal_demand.iloc[t_idx, b_idx]
             power_injection_tb = lpSum([S_lk[l, b] * flow_tl[t, l] for l in branch_names])
@@ -208,14 +196,15 @@ def optimization_SCOS_model(data):
 
         for l_idx, l in enumerate(branch_names):  # DC Power Flow approximation
             """" DC-PF flow approximation --> P_l = B_l (Theta_i - Theta_j) ...l --> (i,j)"""
-            from_b, to_b = f'bus_{from_to_bus[l_idx][0]}', f'bus_{from_to_bus[l_idx][1]}' #todo make {line: fb, tb} dic
+            from_b, to_b = f'bus_{from_to_bus[l_idx][0]}', f'bus_{from_to_bus[l_idx][1]}'  # todo make {line: fb, tb} dic
             SCOS_model += (flow_tl[t, l] == branch_susceptance[l] * (theta_tb[t, from_b] - theta_tb[t, to_b])), f"DCPF_{t}_{l}"
-            if c in generators_names:
-                SCOS_model += (flow_tlc[t, l, c] == branch_susceptance[l] * (theta_tbc[t, from_b, c] - theta_tbc[t, to_b, c])), f"DCPF_{t}_{l}_{c}"
+            for c in n_minus1_names:  # Add Nodal Power Balance for unplanned failures ..... N-1 contingency cases
+                if not(c[3:] == l) and l in outages['names']:
+                    SCOS_model += (flow_tlc[t, l, c] == branch_susceptance[l] * (theta_tbc[t, from_b, c] - theta_tbc[t, to_b, c])), f"DCPF_{t}_{l}_{c}"
 
     # Solve the SCOS model
     # SCOS_model.solve()
-    SCOS_model.solve(PULP_CBC_CMD())
+    SCOS_model.solve(PULP_CBC_CMD(msg=True))
     # Output results
     results = {v.name: v.varValue for v in SCOS_model.variables()}
     return results
@@ -247,7 +236,12 @@ def main(conf_path):
             'num_buses': num_buses,
             'num_branches': num_branches,
             'ref_buses': ['bus_12'],
-            'branch_capacity': branch_capacity}  # todo: how to use net.line['max_i_ka'] --> convert to --> max flow in MW?
+            'branch_capacity': branch_capacity,
+            'n_minus1_names':  [f'n1_{l}' for l in [f'line_{k}' for k in range(5)]]}
+
+    # todo:
+    #   use net.line['max_i_ka'] --> convert to --> max flow in MW?
+    #   large contingency make everything slow .... how to improve speed?
 
     # Run optimization SCOS_model
     results = optimization_SCOS_model(data)
@@ -256,6 +250,15 @@ def main(conf_path):
     for var_name, value in results.items():
         print(f"{var_name}: {value}")
 
+
+
+"""def update_model(SCOS_model, new_demand_data):
+    # Update relevant constraints or objective function with new_data
+    SCOS_model += lpSum([...])  # Update the objective
+    for t in T:
+        # Update or reset constraints if needed
+        SCOS_model.constraints[...] = ...
+    return SCOS_model"""
 
 # Example Usage
 if __name__ == "__main__":
