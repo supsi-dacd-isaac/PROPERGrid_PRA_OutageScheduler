@@ -1,9 +1,11 @@
+import logging
 import os
 import json
 import pandas as pd
 from utils.utils import *
 from scipy.io import loadmat
 import pandapower.networks as networks
+import pandapower as pp
 
 
 def load_json(file_path):
@@ -13,11 +15,11 @@ def load_json(file_path):
     return data
 
 
-def load_matlab_data(conf: dict, feature_name: str = 'hourlyDemandBus'):
+def load_matlab_data(conf: dict, file_name: str = 'hourlyDemandBus.mat', feature_name: str = 'hourlyDemandBus'):
     """ Load matlab data """
-    data_path = os.path.join(get_project_root(), conf['data_path'], conf['case_name'], 'hourlyDemandBus.mat')
+    data_path = os.path.join(get_project_root(), conf['data_path'], conf['case_name'], file_name)
     try:
-        logging.info('Loading hourly demand profiles')
+        logging.info(f'Loading {file_name}')
         mat_data = loadmat(data_path)
         hourly_loads = pd.DataFrame(mat_data[feature_name].T)
         try:
@@ -49,5 +51,11 @@ def data_loader(conf_path: str):
     """load data from the configuration file"""
     conf = load_json(conf_path)
     panda_power_network = load_network(conf)
+    try:
+        logging.info("running DC power flow calculation....for _ppc initialization.")
+        pp.rundcpp(panda_power_network)
+    except:
+        logging.warning("DC power flow calculation failed for this system. Proceeding without _ppc initialization.")
     df_hourly_nodal_demand = load_matlab_data(conf)
     return panda_power_network, df_hourly_nodal_demand, conf
+
