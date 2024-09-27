@@ -13,3 +13,5 @@ python code below
     conf_path = 'config/conf_IEEE118.json' #select use case
     net_data118, df_loads118 = data_loader(conf_path)  # load network and hourly load demand data
 
+#notes/packages to check:  
+https://oats.readthedocs.io/en/latest/extensions.html

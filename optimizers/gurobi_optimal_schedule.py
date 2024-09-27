@@ -1,3 +1,5 @@
+import logging
+
 import pyomo.environ as pe
 from pyomo.opt import SolverFactory
 from utils.utils import *
@@ -152,6 +154,12 @@ def add_planned_outages_constraints(SCOS_model, T, outages_names,
         SCOS_model.addConstr(quicksum(xt[t, o] for t in T) <= dic_outage_duration[o],
                              name=f"Duration_con_{o}")
 
+        """SCOS_model.addConstr(quicksum(start_t[t, o] for t in T) <= 1,
+                             name=f"only one or no start at all constraint")
+        SCOS_model.addConstr(quicksum(end_t[t, o] for t in T) == quicksum(start_t[t, o] for t in T),
+                             name=f"if it starts, it also ends constraint")"""
+
+    # simultaneous mainteinance tasks constraint
     for t in T:
         SCOS_model.addConstr(quicksum(xt[t, o] for o in outages_names) <= max_simulataneous_tasks_t,
                              name=f"Duration_con_{o}")
@@ -308,17 +316,15 @@ def preprecess_data_guroby(data):
     branch_names = [f'line_{l}' for l in range(num_branches)]
     generators_names = [f'gen_{g}' for g in net.gen.index.tolist()]
     outages_names = outages['names']
+    T = [f'step_{t}' for t in range(len(nodal_demand))]
+    n_planning_steps = len(T)
 
     Pg_max = {gn: v for gn, v in zip(generators_names, net.gen['max_p_mw'])}
     Pg_min = {gn: v for gn, v in zip(generators_names, net.gen['min_p_mw'])}
 
     from_to_bus = net.line[['from_bus', 'to_bus']].values.tolist() + net.trafo[['hv_bus', 'lv_bus']].values.tolist()
     branch_capacity = {bn: v for bn, v in zip(branch_names, data['branch_capacity'])}
-
     gen_is_in_bus = [f'bus_{g}' for g in net.gen['bus'].values.tolist()]
-
-    T = [f'step_{t}' for t in range(len(nodal_demand))]
-    n_planning_steps = len(T)
 
     PPC_internal = net._ppc["internal"]
     Incidence = PPC_internal['Cft'].A  # Incidence-matrix
@@ -340,17 +346,30 @@ def preprecess_data_guroby(data):
             branch_susceptance, S_lk, dic_outage_priority, dic_outage_duration)
 
 
+
+# Callback function to log optimization progress
+def log_callback(model, where):
+    if where == GRB.Callback.MSG_LPSOLVE:
+        obj_value = model.cbGet(GRB.Callback.MSG_LPSOLVE_OBJVAL)# Get the objective value
+        iteration_count = model.cbGet(GRB.Callback.MSG_LPSOLVE_ITERATION)# Get the number of iterations
+        logger.info(f"Iteration: {iteration_count}, Objective Value: {obj_value}")# Log the information
+
+
 def optimization_SCOS_model_gurobi(data):
     """
         Prepare Gurobi optimization model for:
         SCOS_model
         security-constrained outage scheduling problem
     """
+    # Initialize logger
+    logging.basicConfig(level=logging.WARN)
+    logger = logging.getLogger()
 
-    (T, outages, nodal_demand, n_minus1_names, reference_bus, num_buses, num_branches,
-         nodes_names, branch_names, generators_names, outages_names, Pg_max, Pg_min, max_tasks_t,
-         from_to_bus, branch_capacity, gen_is_in_bus, n_planning_steps,
-         branch_susceptance, S_lk, dic_outage_priority, dic_outage_duration) = preprecess_data_guroby(data)
+    (T, outages, nodal_demand, n_minus1_names, reference_bus, num_buses, num_branches, nodes_names, branch_names,
+     generators_names, outages_names, Pg_max, Pg_min, max_tasks_t, from_to_bus, branch_capacity, gen_is_in_bus,
+     n_planning_steps, branch_susceptance, S_lk, dic_outage_priority, dic_outage_duration) = preprecess_data_guroby(data)
+
+    # X_sol, D_curt, P_gen = load_and_format_solution('optimal_solution.json', nodes_names, generators_names, outages_names, T)
 
     # ---- START ---- Prepare the SCOS_model
     try:
@@ -453,6 +472,25 @@ def optimization_SCOS_model_gurobi(data):
         print(e)
 
 
+def load_and_format_solution(solution_json_path, nodes_names, generators_names, outage_names, T):
+    solution = load_json(solution_json_path)
+    x_outage = []
+    for o in outage_names:
+        x_outage.append([solution[f'xt_lines_and_gens[{t},{o}]'] for t in T])
+    X_sol = pd.DataFrame(x_outage, index=outage_names, columns=T)
+
+    d_curtailed = []
+    for b in nodes_names:
+        d_curtailed.append([solution[f'd_curt_tb[{t},{b}]'] for t in T])
+    D_curt = pd.DataFrame(d_curtailed, index=nodes_names, columns=T)
+
+    power_gen_tg = []
+    for g in generators_names:
+        power_gen_tg.append([solution[f'power_gen_tg[{t},{g}]'] for t in T])
+    P_gen = pd.DataFrame(power_gen_tg, index=generators_names, columns=T)
+
+    return X_sol, D_curt, P_gen
+
 # Example Usage
 if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """ 
@@ -466,7 +504,7 @@ if __name__ == "__main__":
                'type': ['line', 'line', 'line', 'line', 'line', 'generator', 'generator'],
                'expected_duration_steps': [24, 24, 24, 48, 48, 120, 120],
                'cost_per_step': [1000, 1000, 1000, 2000, 2000, 5000, 5000],
-               'priorities': [1, 1, 3, 2, 1, 1, 3]}
+               'priorities': [1, 1, 3, 2, 1, 1, 3]} # todo: this could be used 'in combination' with the step number
 
     num_branches = len(network.trafo) + len(network.line)
     num_buses = len(network.bus)
