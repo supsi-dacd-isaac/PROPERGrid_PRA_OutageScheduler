@@ -1,6 +1,6 @@
 from pathlib import Path
 import logging
-
+import matplotlib.pyplot as plt
 
 # ANSI escape code for colored text
 blue_c, green_c, purple_c, cyan_c, red_c, gray_c = "\033[94m", "\033[92m", "\033[95m", "\033[96m", "\033[91m", " "
@@ -15,3 +15,7 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent
 
 
+def show_plot(*args, **kwarg):
+    plt.plot(*args, **kwarg)
+    plt.grid()
+    plt.show()
