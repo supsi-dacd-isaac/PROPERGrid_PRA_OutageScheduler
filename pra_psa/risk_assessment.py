@@ -79,6 +79,8 @@ def runPRA(network, n_minus_k_set=None,
             logger.error(f"Failed to apply reference dispatch: {e}")  # Skip to next time step
             continue
 
+        calculate_LODF_and_shift(network, pf_solver=pp.runpp)
+
         logger.info(f'{blue_c} Sampling {n_load_samples} random load from a load model and get failure probabilities from the contingency model {reset_c}')
         load_samples = prob_load_model.sample(load_t, load_t * 0.2, n_sam=n_load_samples)
         prob_t_normal_and_contingencies = prob_cont_model.get_probabilities(failure_set=n_minus_k_set)

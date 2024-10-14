@@ -1,4 +1,5 @@
 import pandapower as pp
+import pandas as pd
 import pandapower.networks as pn
 import numpy as np
 from pra_psa.reliability_performance import *
@@ -85,3 +86,38 @@ def apply_nk_contingency(network, failure_event):
                 continue  # Skip to the next failure event if an error occurs
 
     return contingency_network
+
+
+def calculate_LODF_and_shift(network, pf_solver=pp.runpp):
+    """
+    Calculate the shift in power flows for each line in the Pandapower network
+    when that line is taken out of service.
+
+    Parameters:
+    - network: The Pandapower network to analyze.
+
+    Returns:
+    - p_f_shift_df: A DataFrame containing the power flow shifts for each line.
+    """
+    # List to store the shifts in power flows
+    p_f_shift, LODF = [], []
+    # Run the power flow for the base case (all lines in service)
+    pf_solver(network)
+    original_flow = network.res_line['p_from_mw'].copy()  # Store the original flow
+    for outaged_line_idx in network.line.index:  # Iterate over each line in the network
+        # Set all lines to in_service (necessary to ensure correct initial state)
+        network.line['in_service'] = True
+        network.line.at[outaged_line_idx, 'in_service'] = False  # Set the line to out of service
+        # Power flow on the outaged line before outage
+        P_k_pre = network.res_line.loc[outaged_line_idx, 'p_from_mw']
+        pf_solver(network)  # Run the power flow again after the outage
+        shifted_flow = network.res_line['p_from_mw']  # Store the shifted flow after the outage
+        # Calculate the shift in power flow due to the outage
+        flow_shift = shifted_flow - original_flow
+        # Calculate LODF for each line relative to the outaged line
+        LODF.append(flow_shift / P_k_pre)
+        p_f_shift.append(flow_shift)
+    # Convert list of flow shifts to a DataFrame for easier analysis
+    p_f_shift_df = pd.DataFrame(p_f_shift, index=network.line.index, columns=network.line.index)
+    LODF = pd.DataFrame(LODF, index=network.line.index, columns=network.line.index)
+    return p_f_shift_df, LODF
