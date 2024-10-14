@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-
 def plot_show(val, xlb:str ='x', ylb: str ='y', **kwargs):
     plt.plot(val, **kwargs)
     plt.ylabel(ylb)

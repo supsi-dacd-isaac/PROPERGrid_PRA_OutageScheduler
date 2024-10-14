@@ -161,7 +161,7 @@ def optimization_SCOS_model_gurobi(data, save_res_name=None):
     }
 
     T = [f'step_{t}' for t in range(len(data['nodal_demand']))]
-    p_max = {gn: (v if v > 0 else 200) for gn, v in zip(names['generator_names'], net.gen['max_p_mw'])}
+    p_max = {gn: (v+100 if v > 0 else 200) for gn, v in zip(names['generator_names'], net.gen['max_p_mw'])}
     p_min = {gn: v*0 for gn, v in zip(names['generator_names'], net.gen['min_p_mw'])}  # todo fixme
     f2b = net.line[['from_bus', 'to_bus']].values.tolist() + net.trafo[['hv_bus', 'lv_bus']].values.tolist()
     f_lim = {bn: v for bn, v in zip(names['line_names'], data['branch_capacity'])}

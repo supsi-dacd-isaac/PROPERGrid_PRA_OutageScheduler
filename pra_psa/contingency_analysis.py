@@ -43,7 +43,6 @@ def apply_load(network, p_load):
     return network
 
 
-
 def apply_nk_contingency(network, failure_event):
     """
     Apply an N-k contingency to the network by setting specified lines or generators out of service.
