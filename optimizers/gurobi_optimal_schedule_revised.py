@@ -112,23 +112,23 @@ def add_nodal_power_balance_constraints(model, nod_nam, lin_nam, gen_nam, con_na
     nodal_balance = demand.values - inflows_mat - [[(pgen[t, gen_to_node[b]] if b in gen_to_node else 0) for b in nod_nam] for t in T]
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):  # forall time steps
         for b_idx, b in enumerate(nod_nam):  # Add each constraint individually
-            model.addConstr(nodal_balance[t_idx, b_idx] <= d_wc[t], name=f'Power_Balance_{t}_{b}_up')
-            model.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc[t], name=f'Power_Balance_{t}_{b}_low')
+            model.addConstr(nodal_balance[t_idx, b_idx] <= d_wc[t, b], name=f'Power_Balance_{t}_{b}_up')
+            model.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc[t, b], name=f'Power_Balance_{t}_{b}_low')
 
         for c in con_nam:  # Inflow vector for contingency case
             inflows_c = np.dot(S_T, np.array([f_c[t, l, c] for l in lin_nam]))  # Get flows for the contingency case
             generated = [(pgen_c[t, gen_to_node[b], c] if b in gen_to_node else 0) for b in nod_nam]
             net_demand_less_gen = demand.iloc[t_idx, :].values - inflows_c - generated
             for b_idx, b in enumerate(nod_nam):
-                model.addConstr(net_demand_less_gen[b_idx] <= d_wc_c[t, c],  name=f"Power_Balance_{t}_{b}_{c}_up")
-                model.addConstr(net_demand_less_gen[b_idx] >= -d_wc_c[t, c],  name=f"Power_Balance_{t}_{b}_{c}_low")
+                model.addConstr(net_demand_less_gen[b_idx] <= d_wc_c[t, b, c],  name=f"Power_Balance_{t}_{b}_{c}_up")
+                model.addConstr(net_demand_less_gen[b_idx] >= -d_wc_c[t, b, c],  name=f"Power_Balance_{t}_{b}_{c}_low")
     return model
 
 
-def add_dc_line_flow_constraints(model, f2b, B, f, theta, f_c, theta_c, linod_nam, o_nam, con_nam, T):
+def add_dc_line_flow_constraints(model, f2b, B, f, theta, f_c, theta_c, lin_nam, o_nam, con_nam, T):
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints",
                          total=len(T), ncols=100, colour="green"):
-        for l_idx, l in enumerate(linod_nam):
+        for l_idx, l in enumerate(lin_nam):
             from_b, to_b = f'bus_{f2b[l_idx][0]}', f'bus_{f2b[l_idx][1]}'
             dc_pf_l = f[t, l] == B[l] * (theta[t, from_b] - theta[t, to_b])
             name = f"DC_power_flow_{t}_{l}"
@@ -146,57 +146,64 @@ def optimization_SCOS_model_gurobi(data, save_res_name=None):
     if save_res_name is None:
         save_res_name = "optimal_solution" + data['config']['case_name'] + '_' + data['config'][
             'aggregation_time'] + ".json"
+        save_res_name = '../data/results/deterministic_optimizer/' + save_res_name
 
     # Preprocess the data
     net = data['network']
     max_tasks = data['max_number_of_maintenance_tasks']
-    nod_nam = [f'bus_{b}' for b in range(data['num_buses'])]  # Bus indices
-    lin_nam = [f'line_{l}' for l in range(data['num_branches'])]
-    gen_nam = [f'gen_{g}' for g in net.gen.index.tolist()]
-    out_nam = data['outages']['names']
-    con_nam = data.get('n_minus1_names', None)
+
+    names = {
+        'outage_names': data['outages']['names'],  # List of outage names
+        'line_names': [f'line_{l}' for l in range(data['num_branches'])],  # List of line names
+        'contingency_names': data.get('n_minus1_names', None),  # List of contingency names
+        'bus_names': [f'bus_{b}' for b in range(data['num_buses'])],  # List of bus names
+        'generator_names': [f'gen_{g}' for g in net.gen.index.tolist()]  # List of generator names
+    }
+
     T = [f'step_{t}' for t in range(len(data['nodal_demand']))]
-    p_max = {gn: (v if v > 0 else 1000) for gn, v in zip(gen_nam, net.gen['max_p_mw'])}
-    p_min = {gn: v for gn, v in zip(gen_nam, net.gen['min_p_mw'])}  # todo fixme
+    p_max = {gn: (v if v > 0 else 200) for gn, v in zip(names['generator_names'], net.gen['max_p_mw'])}
+    p_min = {gn: v*0 for gn, v in zip(names['generator_names'], net.gen['min_p_mw'])}  # todo fixme
     f2b = net.line[['from_bus', 'to_bus']].values.tolist() + net.trafo[['hv_bus', 'lv_bus']].values.tolist()
-    f_lim = {bn: v*1.2 for bn, v in zip(lin_nam, data['branch_capacity'])}
+    f_lim = {bn: v for bn, v in zip(names['line_names'], data['branch_capacity'])}
     g2bus = [f'bus_{g}' for g in net.gen['bus'].values.tolist()]
 
     # B = {ln: v for ln, v in zip(lin_nam, np.real(net._ppc["internal"]['Bf'].A).max(axis=1))}
-    B = {ln: abs(np.real(network._ppc['internal']['Bbus'][f2[1], f2[0]])) for ln, f2 in zip(lin_nam, f2b)}
+    B = {ln: abs(np.real(network._ppc['internal']['Bbus'][f2[1], f2[0]])) for ln, f2 in zip(names['line_names'], f2b)}
 
     # S = pd.DataFrame(net._ppc["internal"]['Cft'].A, index=lin_nam, columns=nod_nam)
     S = net._ppc["internal"]['Cft'].A
     # --- S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
     # Generator indices
-    if con_nam is None:
-        con_nam = [f'n1_{l}' for l in lin_nam] + [f'n1_{g}' for g in gen_nam]
+    if names['contingency_names'] is None:
+        names['contingency_names'] = [f'n1_{l}' for l in names['line_names']] + [f'n1_{g}' for g in names['generator_names']]
 
     # Pre-fetch some values for efficiency
-    priority = {o_nam: outages['priorities'][o] for o, o_nam in enumerate(outages['names'])}
-    durations = {o_nam: outages['expected_duration_steps'][o] for o, o_nam in enumerate(outages['names'])}
-    step_cost_outage = {o_nam: outages['cost_per_step'][o] for o, o_nam in enumerate(outages['names'])}
+    priority = {o_nam: outages['priorities'][o] for o, o_nam in enumerate(names['outage_names'])}
+    durations = {o_nam: outages['expected_duration_steps'][o] for o, o_nam in enumerate(names['outage_names'])}
+    step_cost_outage = {o_nam: outages['cost_per_step'][o] for o, o_nam in enumerate(names['outage_names'])}
 
     # ---- START ---- PROBLEM: Security-Constrained Outage Scheduling problem
     try:
         model = Model("Transmission_Outage_Scheduling")
         # ---- VARIABLES
-        xt = model.addVars(T, out_nam, vtype=GRB.BINARY, name="planned_outage_indicator")
-        sxt = model.addVars(T, out_nam, vtype=GRB.BINARY, name="start_outage_indicator")
-        ext = model.addVars(T, out_nam, vtype=GRB.BINARY, name="end_outage_indicator")
-        pgen = model.addVars(T, gen_nam, name="power_generation")
-        pgen_c = model.addVars(T, gen_nam, con_nam, name="power_generation_contingency")
-        d_wc = model.addVars(T, lb=0, name="worst_case_curtailment")
-        d_wc_c = model.addVars(T, con_nam, lb=0, name="worst_case_curtailment_contingency")
-        f = model.addVars(T, lin_nam, name="flow_tl")
-        f_c = model.addVars(T, lin_nam, con_nam, name="flow_tl_contingency")
-        theta = model.addVars(T, nod_nam, lb=-30, ub=30, name="nodal_phase_tb")
-        theta_c = model.addVars(T, nod_nam, con_nam, lb=-30, ub=30, name="nodal_phase_tb_contingency")
+        xt = model.addVars(T, names['outage_names'], vtype=GRB.BINARY, name="planned_outage_indicator")
+        sxt = model.addVars(T, names['outage_names'], vtype=GRB.BINARY, name="start_outage_indicator")
+        ext = model.addVars(T, names['outage_names'], vtype=GRB.BINARY, name="end_outage_indicator")
+        pgen = model.addVars(T, names['generator_names'], name="power_generation")
+        pgen_c = model.addVars(T, names['generator_names'], names['contingency_names'], name="power_generation_contingency")
+        d_wc = model.addVars(T, names['bus_names'], lb=0, name="worst_case_curtailment")
+        d_wc_c = model.addVars(T, names['bus_names'], names['contingency_names'], lb=0, name="worst_case_curtailment_contingency")
+        f = model.addVars(T, names['line_names'], name="flow_tl")
+        f_c = model.addVars(T, names['line_names'], names['contingency_names'], name="flow_tl_contingency")
+        theta = model.addVars(T, names['bus_names'], lb=-30, ub=30, name="nodal_phase_tb")
+        theta_c = model.addVars(T, names['bus_names'], names['contingency_names'], lb=-30, ub=30, name="nodal_phase_tb_contingency")
 
         # ----  OBJECTIVE FUNCTION: Maximize scheduled outages * priority & Minimize Load Curtailment
-        Objective_fun = quicksum((len(T) - t_idx) / len(T) * xt[t, o] * priority[o] * step_cost_outage[o] for t_idx, t in enumerate(T) for o in out_nam)
-        Objective_fun -= quicksum(1e10 * d_wc[t] for t in T) + quicksum(1e10 * d_wc_c[t, c] for c in con_nam for t in T)  # Add the curtailment term
-        Objective_fun -= quicksum(pgen[t, g] + quicksum(pgen_c[t, g, c] for c in con_nam) for t in T for g in gen_nam)  # Add the curtailment term
+        Objective_fun = quicksum((len(T) - t_idx) / len(T) * xt[t, o] * priority[o] * step_cost_outage[o] for t_idx, t in enumerate(T) for o in names['outage_names'])
+        Objective_fun -= (quicksum(1e4 * d_wc[t, n] for n in names['bus_names'] for t in T)
+                          + quicksum(1e4 * d_wc_c[t, n, c] for n in names['bus_names'] for c in names['contingency_names'] for t in T))  # Add the curtailment term
+
+        # Objective_fun += quicksum(pgen[t, g] for t in T for g in gen_nam) + quicksum(pgen_c[t, g, c] for c in con_nam for t in T for g in gen_nam)  # Add the curtailment term
         model.setObjective(Objective_fun, GRB.MAXIMIZE)
 
         logger.info(
@@ -213,42 +220,50 @@ def optimization_SCOS_model_gurobi(data, save_res_name=None):
         # ----  CONSTRAINTS:
         logger.info(f'{blue_c} ADDING CONSTRAINTS: {reset_c}')
         logger.info('adding constraints for scheduled outages: duration, number of tasks, continuity')
-        model = add_planned_outages_constraints(model, out_nam, xt, sxt, ext, max_tasks, durations, T)
+        model = add_planned_outages_constraints(model, names['outage_names'], xt, sxt, ext, max_tasks, durations, T)
 
         logger.info('adding power production constraints, normal + N-1 failures')
-        model = add_generators_constraints(model, xt, out_nam, con_nam, gen_nam, ref_b=data['ref_buses'],
+        model = add_generators_constraints(model, xt,
+                                           names['outage_names'], names['contingency_names'],
+                                           names['generator_names'], ref_b=data['ref_buses'],
                                            theta=theta, pgen=pgen, pgen_c=pgen_c, p_max=p_max, p_min=p_min, T=T)
 
         logger.info('adding line flow constraints, normal + N-1 failures')
-        model = add_line_power_limit_constraints(model, xt, lin_nam, out_nam, con_nam, f_lim, f, f_c, T)
+        model = add_line_power_limit_constraints(model, xt, names['line_names'], names['outage_names'], names['contingency_names'] , f_lim, f, f_c, T)
 
         logger.info('adding node balance constraints, normal + N-1 failures')
-        model = add_nodal_power_balance_constraints(model, nod_nam, lin_nam, gen_nam, con_nam, S,
+        model = add_nodal_power_balance_constraints(model, names['bus_names'],
+                                                    names['line_names'], names['generator_names'], names['contingency_names'], S,
                                                     demand=data['nodal_demand'], pgen=pgen, pgen_c=pgen_c, f=f, f_c=f_c,
                                                     g2bus=g2bus, d_wc=d_wc, d_wc_c=d_wc_c, T=T)
 
         logger.info('adding dc power flow constraints, normal + N-1 failures')
-        model = add_dc_line_flow_constraints(model, f2b, B, f, theta, f_c, theta_c, lin_nam, out_nam, con_nam, T)
+        model = add_dc_line_flow_constraints(model, f2b, B, f, theta, f_c, theta_c,
+                                             names['line_names'], names['outage_names'], names['contingency_names'] , T)
 
         # ----  SOLVE the model
         model.update()
         model.optimize()
 
+        """model.setParam('DualReductions', 0)
+        model.computeIIS()
+        model.write('iis.ilp')
+        """
+
         # Check optimization status
         if model.status == GRB.OPTIMAL:
             logger.info(f"{blue_c} Optimal solution found! :-) :-):-){reset_c}")
-            # Retrieve and save variable values
-            solution = {v.VarName: v.X for v in model.getVars()}
-            # Save the solution to a file or database
-            with open(save_res_name, "w") as f:
+            solution = {v.VarName: v.X for v in model.getVars()}  # Retrieve and save variable values
+            with open(save_res_name, "w") as f: # Save the solution to a file or database
                 json.dump(solution, f)
+
             (LOADed_SOLUTION, X_OutageSchedule, WC_CURTAIL,
-             WC_CURTAIL_CON, PowerGenerated, Line_Flows) = post_process_results(save_res_name,
-                                                                                out_nam, con_nam, gen_nam, lin_nam, T)
-            # plot
-            visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, out_nam,
-                              gen_nam, lin_nam)
+             WC_CURTAIL_CON, PowerGenerated, Line_Flows, PROD_and_CURT) = post_process_results(save_res_name, names, T=T)
+
+            visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, names)  # plot
+
             return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAIL, WC_CURTAIL_CON, PowerGenerated
+
         elif model.status == GRB.INFEASIBLE:
             logger.warning(f"{red_c} Model is infeasible! :-(:-(:-({reset_c}")
             # Run IIS to find conflicting constraints
@@ -275,32 +290,37 @@ def optimization_SCOS_model_gurobi(data, save_res_name=None):
         print(e)
 
 
-def post_process_results(res_path_name, o_nam, con_nam, gen_nam, l_nam, T):
+def post_process_results(res_path_name, names, T):
     LOADed_SOLUTION = load_json(res_path_name)
     x_temp = []
-    for o in o_nam:
+    for o in names['outage_names']:
         x_temp.append([LOADed_SOLUTION[f'planned_outage_indicator[{t},{o}]'] for t in T])
-    X_OutageSchedule = pd.DataFrame(x_temp, index=o_nam, columns=T)
+    X_OutageSchedule = pd.DataFrame(x_temp, index=names['outage_names'], columns=T)
 
     x_temp = []
-    for l in l_nam:
+    for l in names['line_names']:
         x_temp.append([LOADed_SOLUTION[f'flow_tl[{t},{l}]'] for t in T])
-    Line_Flows = pd.DataFrame(x_temp, index=l_nam, columns=T)
+    FLOWS = pd.DataFrame(x_temp, index=names['line_names'], columns=T)
 
     x_temp = []
-    for c in con_nam:
-        x_temp.append([LOADed_SOLUTION[f'worst_case_curtailment_contingency[{t},{c}]'] for t in T])
-    WC_CURTAIL_CON = pd.DataFrame(x_temp, index=con_nam, columns=T)
-    WC_CURTAIL = pd.DataFrame([LOADed_SOLUTION[f'worst_case_curtailment[{t}]'] for t in T])
+    for c in names['contingency_names']:
+        x_temp.append([sum([LOADed_SOLUTION[f'worst_case_curtailment_contingency[{t},{b},{c}]'] for b in names['bus_names']]) for t in T])
+    WC_CURTAIL_CON = pd.DataFrame(x_temp, index=names['contingency_names'], columns=T)
+    WC_CURTAILED = pd.DataFrame([sum([LOADed_SOLUTION[f'worst_case_curtailment[{t},{b}]'] for b in names['bus_names']]) for t in T], index=T).T
 
     x_temp = []
-    for g in gen_nam:
+    for g in names['generator_names']:
         x_temp.append([LOADed_SOLUTION[f'power_generation[{t},{g}]'] for t in T])
-    PowerGenerated = pd.DataFrame(x_temp, index=gen_nam, columns=T)
-    return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAIL, WC_CURTAIL_CON, PowerGenerated, Line_Flows
+    GENERATION = pd.DataFrame(x_temp, index=names['generator_names'], columns=T)
+
+    GEN_PLUS_CURTAILED = (GENERATION.sum().values + WC_CURTAILED.values)[0]
+
+    return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAILED, WC_CURTAIL_CON, GENERATION, FLOWS, GEN_PLUS_CURTAILED
 
 
-def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, o_nam, gen_nam, l_nam):
+def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, names):
+    """visualize result of the SCOS problem"""
+    o_nam, gen_nam, l_nam = names['outage_names'], names['generator_names'], names['line_names']
     fig, ax = plt.subplots(int(len(o_nam) / 4), 4)
     ax = ax.flatten()
     for i, o in enumerate(o_nam):
@@ -322,8 +342,14 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
     plt.grid()
     plt.show()
 
-    WC_CURTAIL.plot()
+    WC_CURTAIL.T.plot()
     plt.title('curtailed demand')
+    plt.xlabel('Time step')
+    plt.grid()
+    plt.show()
+
+    plt.plot(PowerGenerated, ':x')
+    plt.title('Generation')
     plt.xlabel('Time step')
     plt.grid()
     plt.show()
@@ -336,6 +362,7 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
         ax[i].set_ylabel('Flow  ' + l)
         ax[i].grid()
     plt.title('LINE FLOWS')
+    plt.tight_layout()
     plt.show()
 
     fig, ax = plt.subplots(5, 4, figsize=(20, 10))
@@ -345,8 +372,10 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
         ax[i].set_xlabel('time')
         ax[i].set_ylabel(f'Theta bus_{i} ')
         ax[i].grid()
+
     plt.title('Nodes Phases')
     plt.grid()
+    plt.tight_layout()
     plt.show()
 
     fig, ax = plt.subplots(int(len(gen_nam) / 4) + 1, 4, figsize=(20, 10))
@@ -357,6 +386,7 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
         ax[i].set_ylabel('Pgen ' + g)
         ax[i].grid()
     plt.title('Outage Schedule')
+    plt.tight_layout()
     plt.show()
 
 
@@ -424,4 +454,5 @@ if __name__ == "__main__":
             'branch_capacity': branch_capacity,
             'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(25)]]}
 
-    dic_reults = optimization_SCOS_model_gurobi(data)
+    dic_res = optimization_SCOS_model_gurobi(data)
+    print(dic_res)
