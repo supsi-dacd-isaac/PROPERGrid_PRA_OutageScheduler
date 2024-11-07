@@ -2,6 +2,6 @@
   "case_name": "IEEE118",
   "data_path": "data/powersystems",
   "panda_power_case_name": "case118",
-  "aggregation_time": "W"
+  "aggregation_time": "D"
 }
 

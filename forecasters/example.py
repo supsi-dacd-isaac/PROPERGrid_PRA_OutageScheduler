@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-
 from utils.dataloader import *
 from forecasters.probabilisticmodel import Probability_model_nodal_load as Model
 from xgboost import XGBRegressor  # model clss for predictor

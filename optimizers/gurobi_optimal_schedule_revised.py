@@ -15,7 +15,7 @@ logger = logging.getLogger()
 
 
 
-def det_optimization_model_SCOP(data, save_res_name=None):
+def det_optimization_model_SCOP_with_v_ph(data, save_res_name=None):
     """  Prepare Gurobi optimization M for:  SCOS_M security-constrained outage scheduling problem """
 
     if save_res_name is None:
@@ -45,8 +45,8 @@ def det_optimization_model_SCOP(data, save_res_name=None):
         pgen_c = M.addVars(T, names['generators'], names['contingencies'], name="power_generation_contingency")
         d_wc = M.addVars(T, names['buses'], lb=0, name="worst_case_curtailment")
         d_wc_c = M.addVars(T, names['buses'], names['contingencies'], lb=0, name="worst_case_curtailment_contingency")
-        f = M.addVars(T, names['lines'], lb=-GRB.INFINITY, name="flow_tl")
-        f_c = M.addVars(T, names['lines'], names['contingencies'], lb=-GRB.INFINITY, name="flow_tl_contingency")
+        f = M.addVars(T, names['lines'], lb=-GRB.INFINITY, ub=GRB.INFINITY,  name="flow_tl")
+        f_c = M.addVars(T, names['lines'], names['contingencies'], lb=-GRB.INFINITY, ub=GRB.INFINITY, name="flow_tl_contingency")
         theta = M.addVars(T, names['buses'], lb=-10, ub=10, name="nodal_phase_tb")
         theta_c = M.addVars(T, names['buses'], names['contingencies'], lb=-20, ub=20, name="nodal_phase_tb_contingency")
 
@@ -87,18 +87,20 @@ def det_optimization_model_SCOP(data, save_res_name=None):
         logger.info('adding line flow constraints, normal + N-1 failures')
         M = add_line_constraints(M, xt, names, f_lim, f, f_c, theta, theta_c, B_mat, T)
 
-        logger.info('adding dc power flow constraints, normal + N-1 failures')
-        M = add_DCPF_constraints(M, data['nodal_demand'], B_mat, pgen, d_wc, theta, pgen_c, d_wc_c, theta_c, names, g2bus, T)
+        logger.info('adding node balance constraints, normal + N-1 failures')
+        M = add_nodal_power_balance_constraints(M, names, S, demand=data['nodal_demand'],
+                                                pgen=pgen, pgen_c=pgen_c, f=f, f_c=f_c,
+                                                g2bus=g2bus, d_wc=d_wc, d_wc_c=d_wc_c, T=T)
 
         # ----  SOLVE the M
         M.update()
 
-        M.setParam('MIPGap', 0.001)  # Increase acceptable optimality gap
+        M.setParam('MIPGap', 0.005)  # Increase acceptable optimality gap
         M.setParam('Heuristics', 0.5)  # Emphasize heuristics
         M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
         M.setParam('Presolve', 2)  # Enable aggressive presolve
         M.setParam('Threads', 8)  # Use 8 threads for parallel computation
-        M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
+        M.setParam('TimeLimit', 1200)  # Set a one-hour time limit
 
         M.optimize()
 
@@ -148,40 +150,16 @@ def det_optimization_model_SCOP(data, save_res_name=None):
         print(e)
 
 
-def add_DCPF_constraints(M, demand, B_mat, pgen, d_wc, theta, pgen_c, d_wc_c, theta_c, names, g2bus, T):
-    # Precompute generator to node mapping
-    gen_to_node = {b: names['generators'][idx] for idx, b in enumerate(g2bus)}
-    S_T = B_mat.T  # Transpose to get line-to-node mapping
-    for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):
-        generation = np.array([(pgen[t, gen_to_node[b]] if b in gen_to_node else 0) for b_idx, b in enumerate(names['buses'])])
-        in_flows = [quicksum(S_T[b_idx] * theta[t, b]) for b_idx, b in enumerate(names['buses'])]  # Nodal voltage phases at time t
-        nodal_balance = demand.iloc[t_idx, :].values - in_flows - generation
-
-        # Add power balance constraints for normal case
-        for b_idx, b in enumerate(names['buses']):
-            M.addConstr(nodal_balance[b_idx] <= d_wc[t, b], name=f'Power_Balance_{t}_{b}_up')
-            M.addConstr(nodal_balance[b_idx] >= -d_wc[t, b], name=f'Power_Balance_{t}_{b}_low')
-
-        for c in names['contingencies']:  # Contingency case
-            generation_c = np.array([(pgen_c[t, gen_to_node[b], c] if b in gen_to_node else 0) for b_idx, b in enumerate(names['buses'])])
-            in_flows_c = [quicksum(S_T[b_idx] * theta_c[t, b, c]) for b_idx, b in enumerate(names['buses'])]
-            nodal_balance_c = demand.iloc[t_idx, :].values - in_flows_c - generation_c
-            for b_idx, b in enumerate(names['buses']):
-                M.addConstr(nodal_balance_c[b_idx] <= d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_up")
-                M.addConstr(nodal_balance_c[b_idx] >= -d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_low")
-    return M
-
-
 def add_line_constraints(M, xt, names, f_lim, f, f_c, theta, theta_c, B_mat, T):
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):
         v_phases_t = np.array([theta[t, b] for b in names['buses']])
         for l_idx, l in enumerate(names['lines']):
             flow_dc = np.dot(B_mat[l_idx, :], v_phases_t)  # flow_dc = B_l theta_i - B_l theta_j
             if l in names['outages']:
-                M = add_flow_up_low(M, f, f_lim, t, l, xt=xt[t, l])
+                M = add_flow_con_up_low(M, f, f_lim, t, l, xt=xt[t, l])
                 M.addConstr(f[t, l] == flow_dc * (1-xt[t, l]), name=f'Power_Flow_{t}_line_{l}')
             else:
-                M = add_flow_up_low(M, f, f_lim, t, l)
+                M = add_flow_con_up_low(M, f, f_lim, t, l)
                 M.addConstr(f[t, l] == flow_dc, name=f'Power_Flow_{t}_line_{l}')
 
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):
@@ -193,10 +171,10 @@ def add_line_constraints(M, xt, names, f_lim, f, f_c, theta, theta_c, B_mat, T):
                     M.addConstr(f_c[t, l, c] == 0, name=f"Flow_{t}_{l}_{c}_Null")
                 else:
                     if l in names['outages']:
-                        M = add_flow_up_low(M, f_c, f_lim, t, l, c=c, xt=xt[t, l])
-                        M.addConstr(f_c[t, l, c] == flow_dc_con * (1-xt[t, l]), name=f'Power_Flow_{t}_line_{l}_{c}')
+                        M = add_flow_con_up_low(M, f_c, f_lim, t, l, c=c, xt=xt[t, l])
+                        M.addConstr(f_c[t, l, c] == flow_dc_con * (1 - xt[t, l]), name=f'Power_Flow_{t}_line_{l}_{c}')
                     else:
-                        M = add_flow_up_low(M, f_c, f_lim, t, l, c=c)
+                        M = add_flow_con_up_low(M, f_c, f_lim, t, l, c=c)
                         M.addConstr(f_c[t, l, c] == flow_dc_con, name=f'Power_Flow_{t}_line_{l}_{c}')
     return M
 
@@ -231,7 +209,7 @@ if __name__ == "__main__":
 
     num_branches = len(network.trafo) + len(network.line)
     num_buses = len(network.bus)
-    branch_capacity = [175 if max_i_ka <= 1 else 500 for max_i_ka in network.line['max_i_ka']] + [400 for _ in
+    branch_capacity = [175 if max_i_ka <= 1 else 500 for max_i_ka in network.line['max_i_ka']] + [200 for _ in
                                                                                                   network.trafo]
 
     data = {'max_number_of_maintenance_tasks': 2,
@@ -243,7 +221,7 @@ if __name__ == "__main__":
             'num_branches': num_branches,
             'ref_buses': ['bus_12'],
             'branch_capacity': branch_capacity,
-            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(25)]]}
+            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(5)]]}
 
-    dic_res = det_optimization_model_SCOP(data)
+    dic_res = det_optimization_model_SCOP_with_v_ph(data)
     dic_res

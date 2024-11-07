@@ -7,7 +7,6 @@ from utils.utils import *
 from pra_psa.contingency_analysis import *
 from tqdm import tqdm
 
-
 class NaiveProbLoadModel:
     def __init__(self):
         self.min_L = 0
@@ -32,7 +31,7 @@ def runPRA(network, n_minus_k_set=None,
            load_time_series=None,
            prob_cont_model=NaiveProbFailureModel(),
            prob_load_model=NaiveProbLoadModel(),
-           pf_solver=pp.rundcpp, opf_solver=pp.rundcopp):
+           pf_solver=pp.rundcopp, opf_solver=pp.rundcopp):
     """
     Compute worst-case reliability scores for a network using N-1 or N-k contingencies.
 
@@ -72,14 +71,17 @@ def runPRA(network, n_minus_k_set=None,
     for t_id, load_t in enumerate(load_time_series):
         try:  # Apply load at time t get reference power dispatch, apply the dispatch and then analyze load and failure scenarios
             network = apply_load(network, load_t)
-            reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
+            # reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
+            sensitivity_matrix, base_line_flows, network, reference_p_mw, reference_q_mvar \
+                = compute_sensitivity_matrix_and_base_flows( network)
             logger.info(f"{green_c} Solved OPF for base case and undamaged network {reset_c}")
             network = apply_reference_dispatch(network, reference_p_mw=reference_p_mw, reference_q_mvar=reference_q_mvar)  # Optimal reference dispatch
         except Exception as e:
             logger.error(f"Failed to apply reference dispatch: {e}")  # Skip to next time step
             continue
 
-        calculate_LODF_and_shift(network, pf_solver=pp.runpp)
+        network.ext_grid['is_service'] = False
+        # calculate_LODF_and_shift(network, pf_solver=pp.runpp)
 
         logger.info(f'{blue_c} Sampling {n_load_samples} random load from a load model and get failure probabilities from the contingency model {reset_c}')
         load_samples = prob_load_model.sample(load_t, load_t * 0.2, n_sam=n_load_samples)
@@ -150,6 +152,6 @@ if __name__ == '__main__':
     conf_path = '../config/conf_IEEE24.json'
     net_data24, df_loads24, conf24 = data_loader(conf_path)
 
-    load_samples = [lsam[lsam > 0] for lsam in df_loads24.iloc[:100, :].values]
+    load_samples = [lsam[lsam > 0] for lsam in df_loads24.iloc[:24, :].values]
 
     Mean_System_Risk_t, Mean_Risk_c_id_t, Pf_cont_t, worst_case_severity_cont_time_t = runPRA(net_data24, load_time_series=load_samples)

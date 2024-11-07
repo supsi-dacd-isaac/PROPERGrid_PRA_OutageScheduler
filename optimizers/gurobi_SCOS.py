@@ -98,18 +98,18 @@ def add_line_power_limit_constraints(M, xt, names, f_lim, f, f_c, B_lines, T):
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):
         for l in names['lines']:
             if l in names['outages']:
-                M = add_flow_up_low(M, f, f_lim, t, l, xt=xt[t, l])
+                M = add_flow_con_up_low(M, f, f_lim, t, l, xt=xt[t, l])
             else:
-                M = add_flow_up_low(M, f, f_lim, t, l)
+                M = add_flow_con_up_low(M, f, f_lim, t, l)
 
             for c in names['contingencies']:
                 if c[3:] == l:
                     M.addConstr(f_c[t, l, c] ==0, name=f"Flow_{t}_{l}_{c}_MIN")
                 else:
                     if l in names['outages']:
-                        M = add_flow_up_low(M, f_c, f_lim, t, l, c=c, xt=xt[t, l])
+                        M = add_flow_con_up_low(M, f_c, f_lim, t, l, c=c, xt=xt[t, l])
                     else:
-                        M = add_flow_up_low(M, f_c, f_lim, t, l, c=c)
+                        M = add_flow_con_up_low(M, f_c, f_lim, t, l, c=c)
     return M
 
 
@@ -123,7 +123,7 @@ def add_gen_bounds(M, gen_var, p_max, p_min, t, g, c=None, xt=0.0):
     return M
 
 
-def add_flow_up_low(M, flow_var, f_lim, t, l, c=None, xt=0.0):
+def add_flow_con_up_low(M, flow_var, f_lim, t, l, c=None, xt=0.0):
     if c is None:
         M.addConstr(flow_var[t, l] <= f_lim[l] * (1 - xt), name=f"Flow_{t}_{l}_UP")
         M.addConstr(flow_var[t, l] >= -f_lim[l] * (1 - xt), name=f"Flow_{t}_{l}_LOW")
@@ -161,7 +161,7 @@ def prepare_guroby_SCOS_data(data, names):
     max_tasks = data['max_number_of_maintenance_tasks']
 
     T = [f'step_{t}' for t in range(len(data['nodal_demand']))]
-    p_max = {gn: (v + 100 if v > 0 else 200) for gn, v in zip(names['generators'], net.gen['max_p_mw'])}
+    p_max = {gn: (v if v > 0 else 200) for gn, v in zip(names['generators'], net.gen['max_p_mw'])}
     p_min = {gn: v * 0 for gn, v in zip(names['generators'], net.gen['min_p_mw'])}  # todo fixme
     f_lim = {ln: v for ln, v in zip(names['lines'], data['branch_capacity'])}
     g2bus = [f'bus_{g}' for g in net.gen['bus'].values.tolist()]
@@ -265,12 +265,12 @@ def optimization_SCOS_M_gurobi(data, save_res_name=None):
                                                 g2bus=g2bus, d_wc=d_wc, d_wc_c=d_wc_c, T=T)
 
         # ----  SOLVE the M
-        M.setParam('MIPGap', 0.005)  #  Acceptable optimality gap
+        M.setParam('MIPGap', 0.01)  #  Acceptable optimality gap
         M.setParam('Heuristics', 0.5)  # Emphasize heuristics
         M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
         M.setParam('Presolve', 2)  # Enable aggressive pre-solve
         M.setParam('Threads', 8)  # Use 8 threads for parallel computation
-        M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
+        M.setParam('TimeLimit', 8600)  # Set a one-hour time limit
 
         M.update()
         M.optimize()
@@ -288,10 +288,10 @@ def optimization_SCOS_M_gurobi(data, save_res_name=None):
                 json.dump(solution, f)
 
             (LOADed_SOLUTION, X_OutageSchedule, WC_CURTAIL,
-             WC_CURTAIL_CON, PowerGenerated, Line_Flows, PROD_and_CURT) = post_process_results(save_res_name, names,
-                                                                                               T=T)
+             WC_CURTAIL_CON, PowerGenerated,
+             Line_Flows, PROD_and_CURT) = post_process_results(save_res_name, names, T=T)
 
-            visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, names)  # plot
+            visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, WC_CURTAIL_CON, names)  # plot
 
             return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAIL, WC_CURTAIL_CON, PowerGenerated
 
@@ -352,10 +352,10 @@ def post_process_results(res_path_name, names, T):
     return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAILED, WC_CURTAIL_CON, GENERATION, FLOWS, GEN_PLUS_CURTAILED
 
 
-def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, names):
+def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Flows, WC_CURTAIL, WC_CURTAIL_CON, names):
     """visualize result of the SCOS problem"""
     o_nam, gen_nam, l_nam = names['outages'], names['generators'], names['lines']
-    fig, ax = plt.subplots(int(len(o_nam) / 4), 4)
+    fig, ax = plt.subplots(int(len(o_nam) / 4)+1, 4)
     ax = ax.flatten()
     for i, o in enumerate(o_nam):
         X_OutageSchedule.loc[o, :].plot(ax=ax[i])
@@ -369,11 +369,13 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
     X_OutageSchedule.sum().plot()
     plt.xlabel('time step')
     plt.title('Total Outages')
+    plt.tight_layout()
     plt.grid()
     plt.show()
 
     sbn.barplot(X_OutageSchedule.T.sum())
     plt.xlabel('Outages duration')
+    plt.tight_layout()
     plt.grid()
     plt.show()
 
@@ -384,7 +386,24 @@ def visualize_results(LOADed_SOLUTION, X_OutageSchedule, PowerGenerated, Line_Fl
     plt.tight_layout()
     plt.show()
 
-    plt.plot(PowerGenerated, ':x')
+    plt.plot(WC_CURTAIL_CON, ':d', color='r', alpha=0.3, markerfacecolor='k', markeredgewidth=0.1, markeredgecolor='r')
+    plt.title('Curtailed demand under N-1 failures')
+    plt.xlabel('N-1 contingency')
+    plt.grid()
+    plt.xticks(rotation=75)  # Rotate x-ticks by 45 degrees
+    plt.tight_layout()
+    plt.show()
+
+    #
+    # Plot the filtered data
+    WC_CURTAIL_CON.loc[(WC_CURTAIL_CON != 0).any(axis=1)].T.plot()  # Filter to show only non-zero rows
+    plt.title('Curtailed demand under N-1 failures')
+    plt.xlabel('Time step')
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
+
+    plt.plot(PowerGenerated, ':x', alpha=0.5, markerfacecolor='k', markeredgewidth=0.1, markeredgecolor='b')
     plt.title('Generation')
     plt.xlabel('Time step')
     plt.grid()
@@ -439,8 +458,8 @@ if __name__ == "__main__":
     # Load data
     network, hourly_demand, config = data_loader('../config/conf_IEEE24.json')
     aggregation_step = config['aggregation_time']  # 'W', 'D', 'H
-    cost_per_days = [1000, 2000, 1000, 1000, 2000, 2000, 5000, 5000]
-    expected_duration_days = [25, 7, 55, 7, 30, 30, 30, 60]
+    cost_per_days = [1000, 2000, 1000, 1000, 2000, 2000, 5000, 5000, 10]
+    expected_duration_days = [25, 14, 55, 14, 30, 30, 30, 60, 20]
     daily_demand = aggregate_hourly_demand(hourly_demand * 0.5, aggregation_step=aggregation_step)
     if aggregation_step == 'H':
         daily_demand = daily_demand.iloc[:4000, :]  # limit the number of steps
@@ -454,12 +473,12 @@ if __name__ == "__main__":
         expected_duration_steps = expected_duration_days
 
     # example scheduled outage information
-    outages = {'indices': [0, 1, 2, 3, 5, 8, 1, 2],
-               'names': ['line_0', 'line_1', 'line_2', 'line_3', 'line_5', 'line_8', 'gen_1', 'gen_2'],
-               'type': ['line', 'line', 'line', 'line', 'line', 'line', 'generator', 'generator'],
+    outages = {'indices': [0, 1, 2, 3, 5, 8, 1, 2, 8],
+               'names': ['line_0', 'line_1', 'line_2', 'line_3', 'line_5', 'line_8', 'gen_1', 'gen_2', 'gen_8'],
+               'type': ['line', 'line', 'line', 'line', 'line', 'line', 'generator', 'generator', 'generator'],
                'expected_duration_steps': expected_duration_steps,  # step_are_in_days for now
                'cost_per_step': cost_per_step,
-               'priorities': [1, 2, 1, 3, 2, 1, 1, 3]}  # todo: this could be used 'in combination' with the step number
+               'priorities': [1, 2, 1, 3, 2, 1, 1, 3, 2]}  # todo: this could be used 'in combination' with the step number
 
     num_branches = len(network.trafo) + len(network.line)
     num_buses = len(network.bus)
@@ -475,7 +494,7 @@ if __name__ == "__main__":
             'num_branches': num_branches,
             'ref_buses': ['bus_12'],
             'branch_capacity': branch_capacity,
-            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(25)]]}
+            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(30)]]}
 
     dic_res = optimization_SCOS_M_gurobi(data)
     print(dic_res)
