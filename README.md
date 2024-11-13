@@ -1,5 +1,5 @@
 # PROPERGrid
-![PROPERGrid Logo](LOGO_PROPER.pdf)
+![PROPERGrid Logo](LOGO_PROPER.png)
 
 **Tools for Probabilistic Risk-Informed Operational Scheduling for Power Grids**
 
