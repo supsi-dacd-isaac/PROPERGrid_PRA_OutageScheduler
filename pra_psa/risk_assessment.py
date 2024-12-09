@@ -32,7 +32,8 @@ def runPRA(network, n_minus_k_set=None,
            load_time_series=None,
            prob_cont_model=NaiveProbFailureModel(),
            prob_load_model=NaiveProbLoadModel(),
-           pf_solver=pp.rundcopp, opf_solver=pp.rundcopp):
+           pf_solver=pp.rundcpp,
+           opf_solver=pp.rundcopp):
     """
     Compute worst-case reliability scores for a network using N-1 or N-k contingencies.
 
@@ -70,20 +71,24 @@ def runPRA(network, n_minus_k_set=None,
     n_lin_overload_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
 
     for t_id, load_t in enumerate(load_time_series):
+
+        network.ext_grid['in_service'] = False
+        network.gen['slack'] = True
+        network.line['max_loading_percent'] = 100
         try:  # Apply load at time t get reference power dispatch, apply the dispatch and then analyze load and failure scenarios
             network = apply_load(network, load_t)
-            # reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
-            sensitivity_matrix, base_line_flows, network, reference_p_mw, reference_q_mvar \
-                = compute_sensitivity_matrix_and_base_flows( network)
+            reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
+            # sensitivity_matrix, base_line_flows, network, reference_p_mw, reference_q_mvar \
+            #     = compute_sensitivity_matrix_and_base_flows( network)
             logger.info(f"{green_c} Solved OPF for base case and undamaged network {reset_c}")
             network = apply_reference_dispatch(network, reference_p_mw=reference_p_mw, reference_q_mvar=reference_q_mvar)  # Optimal reference dispatch
         except Exception as e:
             logger.error(f"Failed to apply reference dispatch: {e}")  # Skip to next time step
             continue
 
-        network.ext_grid['is_service'] = False
-        # calculate_LODF_and_shift(network, pf_solver=pp.runpp)
 
+        # calculate_LODF_and_shift(network, pf_solver=pp.runpp)
+        network.line['max_loading_percent'] = 180
         logger.info(f'{blue_c} Sampling {n_load_samples} random load from a load model and get failure probabilities from the contingency model {reset_c}')
         load_samples = prob_load_model.sample(load_t, load_t * 0.2, n_sam=n_load_samples)
         prob_t_normal_and_contingencies = prob_cont_model.get_probabilities(failure_set=n_minus_k_set)
@@ -94,7 +99,7 @@ def runPRA(network, n_minus_k_set=None,
             network = apply_load(network, random_load)
 
             try:  # Run power flow on the undamaged network
-                loading, network = get_PF_loading(network, pf_solver=pf_solver)
+                loading, network = get_PF_loading(network, pf_solver=pf_solver, distributed_slack=True)
                 logger.info(f"{green_c} Solved: PF for load sample {l_id}/{n_load_samples} on undamaged network {reset_c}")
             except Exception as e:
                 logger.error(f"Power flow failed for load sample {l_id} on undamaged network: {e}")

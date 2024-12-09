@@ -381,7 +381,7 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
 
         M.update()
 
-        try:
+        """        try:
             #todo: add warm start to CvaR optim too
             M.params.StartNumber = 2
             with open(save_res_dir, "r") as f: # Load the solution from the file
@@ -391,7 +391,7 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
                 if v.VarName in solution:
                     v.start = solution[v.VarName]
         except:
-            pass
+            pass"""
 
         M.optimize()
 

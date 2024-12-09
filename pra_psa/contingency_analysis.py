@@ -9,15 +9,14 @@ import pandapower.pypower.makePTDF as makePTDF
 import pandapower.pypower.makeLODF as makeLODF
 
 
-def get_OPF_gen(net, opf_solver=pp.rundcopp):
-    opf_solver(net)
+def get_OPF_gen(net, opf_solver=pp.rundcopp, distributed_slack=True):
+    opf_solver(net, distributed_slack)
     return net.res_gen.p_mw, net.res_gen.q_mvar, net
 
 
-def get_PF_loading(net, pf_solver=pp.rundcpp):
-    pf_solver(net)
+def get_PF_loading(net, pf_solver=pp.runpp, distributed_slack=True):
+    pf_solver(net, distributed_slack)  # Unpack the kwargs dictionary and pass it as keyword arguments
     return net.res_line.loading_percent, net
-
 
 def apply_reference_dispatch(network, reference_p_mw=None, reference_q_mvar=None):
     if reference_p_mw is not None:
@@ -41,8 +40,9 @@ def apply_reference_dispatch(network, reference_p_mw=None, reference_q_mvar=None
 
 
 def apply_load(network, p_load):
-    for load, pl_j in zip(network.load.index, p_load):
-        network.load.at[load, "p_mw"] = pl_j
+    network.load.loc[:, "p_mw"] = p_load
+    # for load, pl_j in zip(network.load.index, p_load):
+    #    network.load.at[load, "p_mw"] = pl_j
     return network
 
 

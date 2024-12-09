@@ -123,6 +123,6 @@ if __name__ == "__main__":
     VoLL, n_samples = 1e6, 10
     use_DC_PF = False
     dic_res_det = deterministic_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF)
-    dic_res_cvar  = CVAR_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF, n_samples=10)
+    dic_res_cvar  = CVAR_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF, alpha=0.9, n_samples=100)
 
     plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA)

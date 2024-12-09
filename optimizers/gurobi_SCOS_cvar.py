@@ -139,7 +139,8 @@ def post_process_results_cvar(res_path_name, names, T):
 def CVAR_SCOS_gurobi(data,
                      n_samples:int=20,
                      alpha=0.1,
-                     VOLL=1e7, use_DC_PF=True, save_res_name=None):
+                     VOLL=1e7,
+                     use_DC_PF=True, save_res_name=None):
     """   Probabilistic Security-Constrained Outage Scheduling problem with CVaR missmatch minimization"""
     #  nodal demand samples are included
 
