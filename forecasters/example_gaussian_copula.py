@@ -14,7 +14,6 @@ from forecasters.probabilisticmodel import Probability_model_nodal_load as Model
 # from mbtr.mbtr import MBT # example of different model class  (https://github.com/supsi-dacd-isaac/mbtr)
 from forecasters.condcopulas.copulas.gaussian_copulas import GaussianCopula
 
-
 Selected_case = 'SwissGrid' # 'SwissGrid' or 'IEEE118' or 'IEEE24'
 
 if __name__ == '__main__':
@@ -22,13 +21,6 @@ if __name__ == '__main__':
     def find_project_root(start_path, marker='README.md'):
         """
         Recursively search for the project root by looking for a specific marker file or directory.
-
-        Parameters:
-            start_path (Path): The starting path to begin searching from.
-            marker (str): A filename or directory name that indicates the root of the project.
-
-        Returns:
-            Path: The root path of the project if found, otherwise None.
         """
         for parent in start_path.parents:
             if (parent / marker).exists():
