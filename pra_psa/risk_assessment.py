@@ -7,6 +7,7 @@ from utils.utils import *
 from pra_psa.contingency_analysis import *
 from tqdm import tqdm
 
+
 class NaiveProbLoadModel:
     def __init__(self):
         self.min_L = 0
@@ -144,14 +145,3 @@ def runPRA(network, n_minus_k_set=None,
 
 
 
-
-if __name__ == '__main__':
-
-
-    # Step 1: Load the IEEE 118-bus system and loads
-    conf_path = '../config/conf_IEEE24.json'
-    net_data24, df_loads24, conf24 = data_loader(conf_path)
-
-    load_samples = [lsam[lsam > 0] for lsam in df_loads24.iloc[:24, :].values]
-
-    Mean_System_Risk_t, Mean_Risk_c_id_t, Pf_cont_t, worst_case_severity_cont_time_t = runPRA(net_data24, load_time_series=load_samples)

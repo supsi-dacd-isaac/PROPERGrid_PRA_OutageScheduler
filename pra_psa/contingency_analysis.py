@@ -126,6 +126,7 @@ def calculate_lodf_and_shift(network, pf_solver=pp.runpp):
 
 
 def compute_ptdf_matrix(network):
+    #todo: complete the function
     # Extract the square susceptance matrix (Bbus) from the network
     Bbus = network._ppc["internal"]['Bbus']
     # Compute the inverse of the susceptance matrix Bf

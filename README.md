@@ -24,7 +24,7 @@ pip install -r requirements.txt
 Here's a basic usage example for performing a risk-informed operational schedule:
 
 ```python
-from propergrid import Scheduler, RiskAssessment
+from pra_psa import Scheduler, RiskAssessment
 
 # Initialize scheduler with desired settings
 scheduler = Scheduler(grid_data="path/to/grid_data", schedule_horizon=24)
