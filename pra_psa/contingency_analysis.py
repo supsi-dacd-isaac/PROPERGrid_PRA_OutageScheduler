@@ -140,7 +140,6 @@ def compute_ptdf_matrix(network):
         for k in range(n_buses):
             # PTDF calculation for line i and bus k
             ptdf_matrix[i, k] = Bf[i, k] * (Bf_inv[i, k] - Bf_inv[i, k])
-
     return ptdf_matrix
 
 

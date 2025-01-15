@@ -162,20 +162,58 @@ def add_nodal_power_balance_constraints(M, names, S_T, demand, pgen, pgen_c, f, 
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100,
                          colour="green"):  # forall time steps
         for b_idx, b in enumerate(names['buses']):  # Add each constraint individually
-            M.addConstr(nodal_balance[t_idx, b_idx] <= d_wc[t, b], name=f'Power_Balance_{t}_{b}_up')
-            M.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc[t, b], name=f'Power_Balance_{t}_{b}_low')
+            # M.addConstr(nodal_balance[t_idx, b_idx] <= d_wc[t, b], name=f'Power_Balance_{t}_{b}_up')
+            # M.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc[t, b], name=f'Power_Balance_{t}_{b}_low')
+            M.addConstr(nodal_balance[t_idx, b_idx] == d_wc[t, b], name=f'Power_Balance_{t}_{b}_up')
 
     for c in tqdm(names['contingencies'],  desc="Adding Constraints", total=len(names['contingencies']), ncols=100, colour="green"):  # Inflow vector for contingency case
         nodal_balance = calculate_nodal_balance(T, f_c, names, S_T, pgen_c, gen_to_node, demand, c=c)
         for t_idx, t in enumerate(T):  # forall time steps
             for b_idx, b in enumerate(names['buses']):
-                M.addConstr(nodal_balance[t_idx, b_idx] <= d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_up")
-                M.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_low")
-
+                # M.addConstr(nodal_balance[t_idx, b_idx] <= d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_up")
+                # M.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_low")
+                M.addConstr(nodal_balance[t_idx, b_idx] == d_wc_c[t, b, c], name=f"Power_Balance_{t}_{b}_{c}_up")
     return M
 
 
 def define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c):
+    """ OBJECTIVE FUNCTION:
+      1) Maximize number of scheduled outages weighted by priority
+      2) Value of loss load (VOLL). Minimize
+      3) Minimize "unitary" generation cost
+     """
+    nt = len(T)
+
+    # 1) PM: Maximize number of scheduled outages weighted by priority
+    pm_term = quicksum(
+        (nt - t_idx) / nt * xt[t, o] * priority[o] for t_idx, t in enumerate(T) for o in names['outages'])
+
+    # 2) VoLL: Minimize loss of load value
+    scale_weight1 = (nt * len(names['buses']))
+    scale_weight2 = (scale_weight1 * len(names['contingencies']))
+    voll_term = VOLL * quicksum(d_wc[t, n] for n in names['buses'] for t in T) / scale_weight1  # Curtailment term
+    voll_term_c = VOLL * quicksum(d_wc_c[t, n, c] for n in names['buses'] for c in names['contingencies'] for t in T) / scale_weight2
+
+    # 3) Operational costs: Minimize generation cost
+    gen_cost_term = quicksum(pgen[t, g] for g in names['generators'] for t in T) / scale_weight1
+    gen_cost_term_c = quicksum(pgen_c[t, g, c] for g in names['generators'] for c in names['contingencies'] for t in T) / scale_weight2
+
+    # Total objective function (combining all terms)
+    Objective_fun = pm_term - voll_term - voll_term_c - gen_cost_term - gen_cost_term_c
+
+    # Return individual terms along with the total objective function
+    terms = {
+        'PM': pm_term,
+        'VoLL': voll_term ,
+        'VoLL Contingency':  voll_term_c,
+        'Generation Cost': gen_cost_term,
+        'Generation Cost Contingency': gen_cost_term_c,
+    }
+
+    return Objective_fun, terms
+
+
+def define_objective_fun_v0(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c):
     """ OBJECTIVE FUNCTION:
       1) Maximize number of scheduled outages weighted by priority
       2) Value of loss load (VOLL). Minimize
@@ -230,6 +268,15 @@ def prepare_guroby_SCOS_data(data, names):
     return T, max_tasks, p_max, p_min, f_lim, g2bus, gen_to_node, S, B_mat, B_lines, priority, durations, step_cost_outage
 
 
+params = {
+    'MIPGap': 0.001,
+    'Heuristics': 0.5,
+    'Cuts': 2,
+    'Presolve': 2,
+    'Threads': 8,
+    'TimeLimit': 3600
+}
+
 def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None):
     """ Deterministic security-constrained outage planner"""
     # todo:
@@ -258,7 +305,7 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c = initialize_variables(M, names, T)
 
         # ----  OBJECTIVE FUNCTION ---- :
-        Objective_fun = define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c)
+        Objective_fun, objective_terms = define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c)
         M.setObjective(Objective_fun, GRB.MAXIMIZE)
 
         logger.info(
@@ -368,18 +415,19 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
 
 
         # ----  SOLVE the M
-        M.setParam('MIPGap', 0.05)  #  Acceptable optimality gap
-        M.setParam('Heuristics', 0.5)  # Emphasize heuristics
-        M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
-        M.setParam('Presolve', 2)  # Enable aggressive pre-solve
-        M.setParam('Threads', 8)  # Use 8 threads for parallel computation
-        M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
-
+        #M.setParam('MIPGap', 0.05)  #  Acceptable optimality gap
+        #M.setParam('Heuristics', 0.5)  # Emphasize heuristics
+        #M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
+        #M.setParam('Presolve', 2)  # Enable aggressive pre-solve
+        #M.setParam('Threads', 8)  # Use 8 threads for parallel computation
+        #M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
+        setting_parameters(M, params)
         # Check optimization status
         save_res_dir = ("../data/results/deterministic_optimizer/optimal_solution" +
                         data['config']['case_name'] + '_' + data['config']['aggregation_time'] + ".json")
 
         M.update()
+        M.optimize()
 
         """        try:
             #todo: add warm start to CvaR optim too
@@ -393,8 +441,6 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         except:
             pass"""
 
-        M.optimize()
-
         """M.setParam('DualReductions', 0)
         M.computeIIS()
         M.write('iis.ilp')
@@ -407,7 +453,26 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         if solution is not None:
             (LOADed_SOLUTION, results_dictionary) = post_process_results(save_res_dir, names, T=T)
             visualize_results(results_dictionary, names)
-            return results_dictionary, solution
+
+
+            # After optimization, extract the values of each term in the objective function
+            Total_Objective_Val = M.objVal
+            deterministic_obj = M.objVal
+
+            # Prepare dictionary with all terms
+            Obj_val_composed = {
+                'Total Objective': Total_Objective_Val,
+                'Det Objective': deterministic_obj,
+                'PM cost term': objective_terms['PM'].getValue(),
+                'VoLL Normal': objective_terms['VoLL'].getValue(),
+                'Generation Cost Normal': objective_terms['Generation Cost'].getValue(),
+                'VoLL Contingency': objective_terms['VoLL Contingency'].getValue(),
+                'Generation Cost Contingency': objective_terms['Generation Cost Contingency'].getValue(),
+                'CVaR Risk Contribution': []
+            }
+
+            return results_dictionary, solution, Obj_val_composed
+
         else:
             return None, solution
 
@@ -416,6 +481,20 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
 
     except Exception as e:
         print(e)
+
+
+
+
+def setting_parameters(M, params):
+    """
+    Set common parameters for Gurobi optimization, based on the provided `params` dictionary.
+    Parameters:
+    - M: Gurobi model object
+    - params: Dictionary containing the Gurobi parameters to set. For example:
+    """
+    # Iterate over the `params` dictionary and apply the parameters to the model
+    for param, value in params.items():
+        M.setParam(param, value)
 
 
 def post_process_results(res_path_name, names, T):

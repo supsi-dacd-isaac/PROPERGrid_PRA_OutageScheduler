@@ -3,7 +3,7 @@ from tqdm import tqdm
 from utils.dataloader import *
 from utils_and_constraints import visualize_results,  get_and_save_solution
 import seaborn as sbn
-from gurobi_SCOS import (deterministic_SCOS_gurobi, post_process_results, define_objective_fun, load_json, initialize_variables,
+from gurobi_SCOS import (deterministic_SCOS_gurobi, setting_parameters, params, post_process_results, define_objective_fun, load_json, initialize_variables,
                          calculate_nodal_balance, prepare_guroby_SCOS_data, add_planned_outages_constraints, add_nodal_power_balance_constraints,
                          add_generators_constraints, add_line_power_limit_constraints, add_gen_bounds)
 
@@ -136,11 +136,7 @@ def post_process_results_cvar(res_path_name, names, T):
     return SOLUTION, results_dictionary
 
 
-def CVAR_SCOS_gurobi(data,
-                     n_samples:int=20,
-                     alpha=0.1,
-                     VOLL=1e7,
-                     use_DC_PF=True, save_res_name=None):
+def CVAR_SCOS_gurobi(data, n_samples:int=20, alpha=0.1, VOLL=1e6, use_DC_PF=True, save_res_name=None):
     """   Probabilistic Security-Constrained Outage Scheduling problem with CVaR missmatch minimization"""
     #  nodal demand samples are included
 
@@ -158,29 +154,32 @@ def CVAR_SCOS_gurobi(data,
      priority, durations, step_cost_outage) = prepare_guroby_SCOS_data(data, names)
 
     # ---- START ----
-    # PROBLEM: Probabilistic Security-Constrained Outage Scheduling problem with CVaR missmatch minimization
+    # PROBLEM: Stochastic SCOP problem with CVaR minimization
     try:
         # ---- define the model
         M = Model("Transmission_Outage_Scheduling_CVaR")
-
-        M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c = initialize_variables(M, names, T) # ---- VARIABLES
+        # ---- VARIABLES
+        M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c = initialize_variables(M, names, T)
 
         # ----  OBJECTIVE FUNCTION ---- :
-        Objective_fun = define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c)
+        Objective_fun, objective_terms = define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c)
 
         # --------------  CVaR minimization
+
         # Define the loss of load variables for each bus, time step, and scenario
         d_wc_scenario = M.addVars(T, names['buses'], names['demand_scenarios'], lb=0, name="Loss_of_bus_load_scenarios")
         VarDev = M.addVars(T, names['buses'], names['demand_scenarios'], vtype=GRB.CONTINUOUS, lb=0, name="Deviation_from_VaR")
         CVaR = M.addVars(T, names['buses'], vtype=GRB.CONTINUOUS, lb=0, name="CVaR")
+
         # Add aux vars,  VaR = loss of load planned case (d_wc)
         M.addConstrs(d_wc_scenario[t, b, s] - d_wc[t, b] <= VarDev[t, b, s] for t in T for b in names['buses'] for s in names['demand_scenarios'])
+
         # Define deviation variables and alpha percentile for CVaR
         M.addConstrs(d_wc[t, b] + (1 / (len(names['demand_scenarios']) * alpha)) *
                      quicksum(VarDev[t, b, s] for s in names['demand_scenarios']) == CVaR[t, b] for t in T for b in names['buses'])
+
         # add to objective function --> Minimize CVaR (overall risk)
         Objective_fun -= quicksum(CVaR[t, b] for t in T for b in names['buses'])
-
         M.setObjective(Objective_fun, GRB.MAXIMIZE)
 
         logger.info(
@@ -258,12 +257,13 @@ def CVAR_SCOS_gurobi(data,
                     M.addConstr(nodal_balance[t_idx, b_idx] >= -d_wc_scenario[t, b, s], name=f'Power_Balance_{t}_{b}_{s}_low')
 
         # ----  SOLVE the M
-        M.setParam('MIPGap', 0.005)  #  Acceptable optimality gap
-        M.setParam('Heuristics', 0.5)  # Emphasize heuristics
-        M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
-        M.setParam('Presolve', 2)  # Enable aggressive pre-solve
-        M.setParam('Threads', 8)  # Use 8 threads for parallel computation
-        M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
+        #M.setParam('MIPGap', 0.05)  #  Acceptable optimality gap
+        #M.setParam('Heuristics', 0.5)  # Emphasize heuristics
+        #M.setParam('Cuts', 2)  # Allow Gurobi to generate more cuts
+        #M.setParam('Presolve', 2)  # Enable aggressive pre-solve
+        #M.setParam('Threads', 8)  # Use 8 threads for parallel computation
+        #M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
+        setting_parameters(M, params)
 
         M.update()
         M.optimize()
@@ -280,7 +280,26 @@ def CVAR_SCOS_gurobi(data,
             (LOADed_SOLUTION, results_dictionary) = post_process_results_cvar(save_res_dir, names, T=T)
             visualize_results(results_dictionary, names)
             plot_risk_pdf_cdf(results_dictionary['CVARisk'])
-            return results_dictionary, solution
+
+            # After optimization, extract the values of each term in the objective function
+            Total_Objective_Val = M.objVal
+            deterministic_obj = M.objVal - sum(
+                CVaR[t, b].x for t in T for b in names['buses'])  # Remove CVaR term
+
+            # Prepare dictionary with all terms
+            Obj_val_composed = {
+                'Total Objective': Total_Objective_Val,
+                'Det Objective': deterministic_obj,
+                'PM cost term': objective_terms['PM'].getValue(),
+                'VoLL Normal': objective_terms['VoLL'].getValue(),
+                'Generation Cost Normal': objective_terms['Generation Cost'].getValue(),
+                'VoLL Contingency': objective_terms['VoLL Contingency'].getValue(),
+                'Generation Cost Contingency': objective_terms['Generation Cost Contingency'].getValue(),
+                'CVaR Risk Contribution': sum(CVaR[t, b].x for t in T for b in names['buses'])
+            }
+
+            return results_dictionary, solution, Obj_val_composed
+
         else:
             return None, solution
 

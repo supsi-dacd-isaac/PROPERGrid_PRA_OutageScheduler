@@ -17,7 +17,7 @@ def plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA):
     n_rows = int(len(o_nam) / n_col)
     fig, ax = plt.subplots(n_rows, n_col, figsize=(10, n_rows * 4))
     ax = ax.flatten()
-    for results_dictionary, style in zip([dic_res_det[0], dic_res_cvar[0]], ['-', '--']):
+    for results_dictionary, style in zip([dic_res_det, dic_res_cvar], ['-', '--']):
 
         X_OutageSchedule = results_dictionary["X_OutageSchedule"]
         o_nam, gen_nam, l_nam = names['outages'], names['generators'], names['lines']
@@ -51,7 +51,7 @@ def plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA):
     fig, ax = plt.subplots(int(len(l_nam[:n_line2_plot]) / 3), 3, figsize=(20, 15))
     ax = ax.flatten()
 
-    for results_dictionary, style in zip([dic_res_det[0], dic_res_cvar[0]], ['-', '--']):
+    for results_dictionary, style in zip([dic_res_det, dic_res_cvar], ['-', '--']):
 
         Line_Flows = results_dictionary["Line_Flows"]
 
@@ -117,12 +117,15 @@ if __name__ == "__main__":
             'num_branches': num_branches,
             'ref_buses': ['bus_12'],
             'branch_capacity': branch_capacity,
-            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(30)]]}
+            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(10)]]}
 
     # Run the Gurobi optimizations
-    VoLL, n_samples = 1e6, 10
+    VoLL, n_samples, alpha = 1e4, 200, 0.9
     use_DC_PF = False
-    dic_res_det = deterministic_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF)
-    dic_res_cvar  = CVAR_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF, alpha=0.9, n_samples=100)
+    dic_res_det, sol_det, Obj_det = deterministic_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF)
+    dic_res_cvar, sol_cvar, Obj_cvar  = CVAR_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF, alpha=alpha, n_samples=n_samples)
 
     plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA)
+
+    print(Obj_det)
+    print(Obj_cvar)
