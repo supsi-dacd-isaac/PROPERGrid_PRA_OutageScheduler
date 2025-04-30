@@ -1,18 +1,11 @@
 from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from forecasters.condcopulas.kernels.beta_kernel import SequentialKDE
-from forecasters.condcopulas.copulas.gaussian_copulas import GaussianCopula
-from pathlib import Path
+from pra_psa.probabilistic_models.condcopulas.kernels.beta_kernel import SequentialKDE
 
-from utils.dataloader import *
-from forecasters.probabilisticmodel import Probability_model_nodal_load as Model
 # from xgboost import XGBRegressor  # model clss for predictor
 # from mbtr.mbtr import MBT # example of different model class  (https://github.com/supsi-dacd-isaac/mbtr)
-from forecasters.condcopulas.copulas.gaussian_copulas import GaussianCopula
+from pra_psa.probabilistic_models.condcopulas.copulas.gaussian_copulas import GaussianCopula
 
 Selected_case = 'SwissGrid' # 'SwissGrid' or 'IEEE118' or 'IEEE24'
 
@@ -55,7 +48,7 @@ if __name__ == '__main__':
         h_kernel = 0.05
 
     elif Selected_case == 'IEEE118':
-        conf_path = '../config/conf_IEEE118.json'
+        conf_path = '../../config/conf_IEEE118.json'
         net_data_24, df_nodal_loads, conf24 = data_loader(conf_path)
         df_nodal_loads.index = pd.date_range(start='1/1/2020', periods=len(df_nodal_loads), freq='H')
         df_nodal_loads.name = 'load'
@@ -65,7 +58,7 @@ if __name__ == '__main__':
         h_kernel = 0.001
 
     elif Selected_case == 'IEEE24':
-        conf_path = '../config/conf_IEEE24.json'
+        conf_path = '../../config/conf_IEEE24.json'
         net_data_24, df_nodal_loads, conf24 = data_loader(conf_path)
         df_nodal_loads.index = pd.date_range(start='1/1/2020', periods=len(df_nodal_loads), freq='H')
         df_nodal_loads.name = 'load'

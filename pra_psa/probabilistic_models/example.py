@@ -1,12 +1,10 @@
-import matplotlib.pyplot as plt
-from utils.dataloader import *
-from forecasters.probabilisticmodel import Probability_model_nodal_load as Model
+from pra_psa.probabilistic_models.probabilisticmodel import Probability_model_nodal_load as Model
 from xgboost import XGBRegressor  # model clss for predictor
 # from mbtr.mbtr import MBT # example of different model class  (https://github.com/supsi-dacd-isaac/mbtr)
 
 if __name__ == '__main__':
 
-    conf_path = '../config/conf_IEEE24.json'
+    conf_path = '../../config/conf_IEEE24.json'
     forecast_model_path = os.path.join(get_project_root(), 'forecasters', 'models', 'prob_model_ieee24_xgboost')
     net_data_24, df_loads_24, conf24 = data_loader(conf_path)
 
@@ -31,7 +29,6 @@ if __name__ == '__main__':
     expected_y_pred = model.predict(x=X_pred_list)
 
     # plot
-    from utils.plotters import *
     plt.plot(pd.DataFrame(expected_y_pred).T)
     plt.xlabel('time index')
     plt.ylabel('load [MW]')

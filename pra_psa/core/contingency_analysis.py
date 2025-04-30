@@ -1,12 +1,7 @@
 import pandapower as pp
 import pandas as pd
-import pandapower.networks as pn
 import numpy as np
 from pra_psa.reliability_performance import *
-from utils.dataloader import data_loader
-from utils.utils import *
-import pandapower.pypower.makePTDF as makePTDF
-import pandapower.pypower.makeLODF as makeLODF
 
 
 def get_OPF_gen(net, opf_solver=pp.rundcopp, distributed_slack=True):
@@ -18,111 +13,126 @@ def get_PF_loading(net, pf_solver=pp.runpp, distributed_slack=True):
     pf_solver(net, distributed_slack)  # Unpack the kwargs dictionary and pass it as keyword arguments
     return net.res_line.loading_percent, net
 
+
 def apply_reference_dispatch(network, reference_p_mw=None, reference_q_mvar=None):
     if reference_p_mw is not None:
         for gen, p_mw in zip(network.gen.index, reference_p_mw):
             network.gen.at[gen, "p_mw"] = p_mw
             network.gen.at[gen, "max_p_mw"] = p_mw
             network.gen.at[gen, "min_p_mw"] = p_mw
-
     if reference_q_mvar is not None:
-        for gen, q_mvar in zip(network.gen.index, reference_p_mw):
-            network.gen.at[gen, "sn_mva"] = q_mvar
+        for gen, q_mvar in zip(network.gen.index, reference_q_mvar):
+            network.gen.at[gen, "q_mvar"] = q_mvar
             network.gen.at[gen, "max_q_mvar"] = q_mvar
             network.gen.at[gen, "min_q_mvar"] = q_mvar
 
-    """
-    # how to apply reference dispatch to the network 
-    """
-    network.ext_grid['min_p_mw'] = network.res_ext_grid['p_mw']
-    network.ext_grid['max_p_mw'] = network.res_ext_grid['p_mw']
-    return network
-
 
 def apply_load(network, p_load):
-    network.load.loc[:, "p_mw"] = p_load
-    # for load, pl_j in zip(network.load.index, p_load):
-    #    network.load.at[load, "p_mw"] = pl_j
-    return network
-
-
-def apply_nk_contingency(network, failure_event):
-    """
-    Apply an N-k contingency to the network by setting specified lines or generators out of service.
-
-    Parameters:
-    - network: The original pandapower network object.
-    - Nk_failure_event: A dictionary or list of dictionaries specifying the elements to take out of service.
-                       Each dictionary must have two elements:
-                        'element_type' in {line, gen, trafo}
-                       'element_index' integer.
-
-    Returns:
-    - contingency_network: A deep copy of the network with the specified elements out of service.
-    """
-
-    contingency_network = network.deepcopy()
-    # Ensure Nk_failure_event is always treated as a list for uniformity
-    if type(failure_event) is not list:
-        failure_event = [failure_event]
-
-        for failure_k in failure_event:
-            try:
-                element_type = failure_k.get('element_type')
-                element_index = failure_k.get('element_index')
-
-                if element_type == "line":
-                    # Remove the line by setting it out of service
-                    contingency_network.line.at[element_index, "in_service"] = False
-                elif element_type == "generator":
-                    # Remove the generator by setting it out of service
-                    contingency_network.gen.at[element_index, "in_service"] = False
-                elif element_type == "trafo":
-                    # Remove the generator by setting it out of service
-                    contingency_network.trafo.at[element_index, "in_service"] = False
-                else:
-                    raise ValueError("Invalid element type for N-k....use {line, gen, trafo}, not ", element_type)
-
-            except KeyError as e:
-                logger.error(f"Invalid element index or type in contingency: {failure_k}. Error: {e}")
-                continue  # Skip to the next failure event if an error occurs
-
-    return contingency_network
+    for load, p in zip(network.load.index, p_load):
+        network.load.at[load, "p_mw"] = p
 
 
 def calculate_lodf_and_shift(network, pf_solver=pp.runpp):
-    """
-    Calculate the shift in power flows for each line in the Pandapower network
-    when that line is taken out of service.
-
-    Parameters:
-    - network: The Pandapower network to analyze.
-
-    Returns:
-    - p_f_shift_df: A DataFrame containing the power flow shifts for each line.
-    """
-    # List to store the shifts in power flows
-    p_f_shift, LODF = [], []
-    # Run the power flow for the base case (all lines in service)
+    """Calculate Line Outage Distribution Factors (LODF) and shift factors."""
+    n_lines = len(network.line)
+    lodf_matrix = np.zeros((n_lines, n_lines))
+    shift_factors = np.zeros((n_lines, n_lines))
+    
+    # Get base case flows
     pf_solver(network)
-    original_flow = network.res_line['p_from_mw'].copy()  # Store the original flow
-    for outaged_line_idx in network.line.index:  # Iterate over each line in the network
-        # Set all lines to in_service (necessary to ensure correct initial state)
-        network.line['in_service'] = True
-        network.line.at[outaged_line_idx, 'in_service'] = False  # Set the line to out of service
-        # Power flow on the outaged line before outage
-        P_k_pre = network.res_line.loc[outaged_line_idx, 'p_from_mw']
-        pf_solver(network)  # Run the power flow again after the outage
-        shifted_flow = network.res_line['p_from_mw']  # Store the shifted flow after the outage
-        # Calculate the shift in power flow due to the outage
-        flow_shift = shifted_flow - original_flow
-        # Calculate LODF for each line relative to the outaged line
-        LODF.append(flow_shift / P_k_pre)
-        p_f_shift.append(flow_shift)
-    # Convert list of flow shifts to a DataFrame for easier analysis
-    p_f_shift_df = pd.DataFrame(p_f_shift, index=network.line.index, columns=network.line.index)
-    LODF = pd.DataFrame(LODF, index=network.line.index, columns=network.line.index)
-    return p_f_shift_df, LODF
+    base_flows = network.res_line.p_from_mw.values
+    
+    for i in range(n_lines):
+        # Create a copy of the network for contingency
+        net_cont = network.copy()
+        # Outage line i
+        net_cont.line.at[i, "in_service"] = False
+        
+        # Run power flow
+        try:
+            pf_solver(net_cont)
+            cont_flows = net_cont.res_line.p_from_mw.values
+            
+            # Calculate LODF and shift factors
+            for j in range(n_lines):
+                if i != j:
+                    lodf_matrix[j, i] = (cont_flows[j] - base_flows[j]) / base_flows[i]
+                    shift_factors[j, i] = cont_flows[j] - base_flows[j]
+        except:
+            # If power flow fails, set factors to infinity
+            lodf_matrix[:, i] = np.inf
+            shift_factors[:, i] = np.inf
+    
+    return lodf_matrix, shift_factors
+
+
+def analyze_contingency(network, contingency, reference_dispatch=None):
+    """
+    Analyze a contingency scenario and return detailed results.
+    
+    Args:
+        network: pandapower network
+        contingency: dictionary with 'element_type' and 'element_index'
+        reference_dispatch: tuple of (p_mw, q_mvar) for reference dispatch
+        
+    Returns:
+        dict: Analysis results including:
+            - success: bool indicating if power flow converged
+            - loading: line loading percentages
+            - violations: list of constraint violations
+            - severity: severity score of the contingency
+    """
+    # Create a deep copy of the network for analysis
+    net = network.deepcopy()
+    
+    # Apply reference dispatch if provided
+    if reference_dispatch is not None:
+        p_mw, q_mvar = reference_dispatch
+        apply_reference_dispatch(net, p_mw, q_mvar)
+    
+    # Apply contingency
+    element_type = contingency['element_type']
+    element_index = contingency['element_index']
+    
+    if element_type == 'line':
+        net.line.loc[element_index, 'in_service'] = False
+    elif element_type == 'gen':
+        net.gen.loc[element_index, 'in_service'] = False
+    elif element_type == 'trafo':
+        net.trafo.loc[element_index, 'in_service'] = False
+    else:
+        raise ValueError(f"Unknown element type: {element_type}")
+    
+    # Run power flow
+    try:
+        pp.runpp(net)
+        success = True
+        loading = net.res_line.loading_percent
+        violations = []
+        
+        # Check for violations
+        if any(loading > 100):
+            violations.append('line_overload')
+        if any(net.res_bus.vm_pu < 0.9) or any(net.res_bus.vm_pu > 1.1):
+            violations.append('voltage_violation')
+        if any(net.res_gen.p_mw > net.gen.max_p_mw) or any(net.res_gen.p_mw < net.gen.min_p_mw):
+            violations.append('generator_limit')
+            
+        # Calculate severity score
+        severity = max(loading) if loading is not None else float('inf')
+        
+    except:
+        success = False
+        loading = None
+        violations = ['power_flow_divergence']
+        severity = float('inf')
+    
+    return {
+        'success': success,
+        'loading': loading,
+        'violations': violations,
+        'severity': severity
+    }
 
 
 def compute_ptdf_matrix(network):
