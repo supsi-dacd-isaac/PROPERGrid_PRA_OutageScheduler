@@ -1,8 +1,5 @@
-import matplotlib.pyplot as plt
-from gurobipy import Model, GRB, quicksum, GurobiError
-from utils.dataloader import *
-from tqdm import tqdm
-import seaborn as sbn
+from gurobipy import GRB, quicksum
+from pra_psa.utils.utils import *
 
 
 def my_quick_sum_dic(var, N1, N2=None, N3=None):
@@ -14,10 +11,37 @@ def my_quick_sum_dic(var, N1, N2=None, N3=None):
         return quicksum(var[n1, n2, n3] for n3 in N3 for n2 in N2 for n1 in N1)
 
 
-def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = None):
+def define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c):
+    """----  OBJECTIVE FUNCTION ---- :
+
+      1) Maximize number of scheduled outages weighted by priority
+      2) Value of loss load (VOLL). Minimize
+      3) Minimize "unitary" generation cost
+     """
+    # 1) PM
+    nt = len(T)
+    Objective_fun = quicksum(
+        (nt - t_idx) / nt * xt[t, o] * priority[o] * step_cost_outage[o] for t_idx, t in enumerate(T) for o in
+        names['outages'])
+
+    # 2) VOLL
+    scale_weight = (nt + len(names['buses']))
+    Objective_fun -= VOLL * quicksum(
+        d_wc[t, n] for n in names['buses'] for t in T) / scale_weight  # Add the curtailment term
+    Objective_fun -= VOLL * quicksum(
+        d_wc_c[t, n, c] for n in names['buses'] for c in names['contingencies'] for t in T) / (
+                                 scale_weight + len(names['contingencies']))
+
+    # 3) Operational costs
+    Objective_fun -= quicksum(pgen[t, g] for g in names['generators'] for t in T) / scale_weight
+    Objective_fun -= quicksum(pgen_c[t, g, c] for g in names['generators'] for c in names['contingencies'] for t in T) / (
+                                 scale_weight + len(names['contingencies']))
+    return Objective_fun
+
+
+def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c=None):
     """
     Calculate inflows, generation, and nodal balance for a given set of parameters.
-
     Parameters:
         T (list): Time steps.
         f (ndarray): Flow data.
@@ -26,26 +50,18 @@ def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = Non
         pgen (ndarray): Generation data.
         gen_to_node (dict): Mapping of generators to bus nodes.
         demand (DataFrame): Demand values.
-
     Returns:
         nodal_balance (ndarray): The calculated nodal balance.
     """
-    inflows_mat = []
-    generation_all = []
 
+    inflows_mat, generation_all = [], []
     for t in T:
-        if c is None:
-            flows_t = np.array([f[t, l] for l in names['lines']])  # Flow values for current time step
-        else:
-            flows_t = np.array([f[t, l, c] for l in names['lines']])  # Flow values for current time step
+        # Flow values for current time step
+        flows_t = np.array([f[t, l] for l in names['lines']]) if c is None else np.array([f[t, l, c] for l in names['lines']])
 
         # Calculate inflows at each bus
-        flows_con_t = [
-            np.sum(S_T[b_idx, :][np.argwhere(S_T[b_idx, :]).flatten()] *
-                   flows_t[np.argwhere(S_T[b_idx, :]).flatten()])
-            for b_idx in range(len(names['buses']))
-        ]
-
+        flows_con_t = [np.sum(S_T[b_idx, :][np.argwhere(S_T[b_idx, :]).flatten()] * flows_t[np.argwhere(S_T[b_idx, :]).flatten()])
+                       for b_idx in range(len(names['buses']))]
         # Calculate generation at each bus
         if c is None:
             generators_t = [pgen[t, gen_to_node[b]] if b in gen_to_node else 0 for b in names['buses']]
@@ -55,13 +71,10 @@ def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = Non
         inflows_mat.append(flows_con_t)
         generation_all.append(generators_t)
 
-    # Convert lists to NumPy arrays and remove any extra dimensions
-    inflows_mat = np.squeeze(np.array(inflows_mat))
-    generation_all = np.squeeze(np.array(generation_all))
+    inflows_mat = np.squeeze(np.array(inflows_mat))  # Convert lists to NumPy arrays
+    generation_all = np.squeeze(np.array(generation_all))  #  and remove any extra dimensions
 
-    # Calculate nodal balance
-    nodal_balance = demand.values - inflows_mat - generation_all
-
+    nodal_balance = demand.values - inflows_mat - generation_all  # Calculate nodal balance
     return nodal_balance
 
 
@@ -183,124 +196,6 @@ def add_line_dc_power_flow_constraints(M, names, xt, f_lim, f, f_c, theta, theta
     return M
 
 
-def post_process_results(res_path_name, names, T):
-    LOADed_SOLUTION = load_json(res_path_name)
-    x_temp = []
-    for o in names['outages']:
-        x_temp.append([LOADed_SOLUTION[f'planned_outage_indicator[{t},{o}]'] for t in T])
-    X_OutageSchedule = pd.DataFrame(x_temp, index=names['outages'], columns=T)
-
-    x_temp = []
-    for l in names['lines']:
-        x_temp.append([LOADed_SOLUTION[f'flow_tl[{t},{l}]'] for t in T])
-    FLOWS = pd.DataFrame(x_temp, index=names['lines'], columns=T)
-
-    x_temp = []
-    for c in names['contingencies']:
-        x_temp.append(
-            [sum([LOADed_SOLUTION[f'worst_case_curtailment_contingency[{t},{b},{c}]'] for b in names['buses']]) for t in
-             T])
-    WC_CURTAIL_CON = pd.DataFrame(x_temp, index=names['contingencies'], columns=T)
-    WC_CURTAILED = pd.DataFrame(
-        [sum([LOADed_SOLUTION[f'worst_case_curtailment[{t},{b}]'] for b in names['buses']]) for t in T], index=T).T
-
-    x_temp = []
-    for g in names['generators']:
-        x_temp.append([LOADed_SOLUTION[f'power_generation[{t},{g}]'] for t in T])
-    GENERATION = pd.DataFrame(x_temp, index=names['generators'], columns=T)
-
-    GEN_PLUS_CURTAILED = (GENERATION.sum().values + WC_CURTAILED.values)[0]
-
-    return LOADed_SOLUTION, X_OutageSchedule, WC_CURTAILED, WC_CURTAIL_CON, GENERATION, FLOWS, GEN_PLUS_CURTAILED
-
-
-def visualize_results(results_dictionary, names):
-    """visualize result of the SCOS problem"""
-
-    X_OutageSchedule = results_dictionary["X_OutageSchedule"]
-    PowerGenerated = results_dictionary["PowerGenerated"]
-    Line_Flows = results_dictionary["Line_Flows"]
-    WC_CURTAIL = results_dictionary["WC_CURTAIL"]
-    WC_CURTAIL_CON = results_dictionary["WC_CURTAIL_CON"]
-    o_nam, gen_nam, l_nam = names['outages'], names['generators'], names['lines']
-
-    ncol = 2
-    n_rows = int(len(o_nam) / ncol)
-    fig, ax = plt.subplots(n_rows + 1, ncol, figsize=(12, n_rows * 5))
-    ax = ax.flatten()
-    for i, o in enumerate(o_nam):
-        X_OutageSchedule.loc[o, :].plot(ax=ax[i])
-        ax[i].set_xlabel('Time')
-        ax[i].set_ylabel('Outage  ' + o)
-        ax[i].grid()
-        # Rotate x-tick labels
-        ax[i].tick_params(axis='x', rotation=45)
-    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Adjust layout to fit better
-    fig.suptitle('Outage Schedule', fontsize=16)  # Add a main title
-    plt.show()
-
-    X_OutageSchedule.sum().plot()
-    plt.xlabel('time step')
-    plt.ylabel('Number of PM tasks')
-    plt.title('Total Outages')
-    plt.tight_layout()
-    plt.grid()
-    plt.show()
-
-    sbn.barplot(X_OutageSchedule.T.sum())
-    plt.xlabel('Outages duration')
-    plt.ylabel('PM duration [steps]')
-    plt.tight_layout()
-    plt.grid()
-    plt.show()
-
-
-    plt.plot(WC_CURTAIL_CON, ':d', color='r', alpha=0.3, markerfacecolor='k', markeredgewidth=0.1, markeredgecolor='r')
-    plt.title('Curtailed demand under N-1 failures')
-    plt.xlabel('N-1 contingency')
-    plt.grid()
-    plt.xticks(rotation=75)  # Rotate x-ticks by 45 degrees
-    plt.tight_layout()
-    plt.show()
-
-    #
-    # Plot the filtered data
-    WC_CURTAIL_CON.loc[(WC_CURTAIL_CON != 0).any(axis=1)].T.plot()  # Filter to show only non-zero rows
-    plt.title('Curtailed demand under N-1 failures')
-    plt.xlabel('Time step')
-    plt.grid()
-    plt.tight_layout()
-    plt.show()
-
-    plt.plot(PowerGenerated, ':x', alpha=0.5, markerfacecolor='k', markeredgewidth=0.1, markeredgecolor='b')
-    plt.title('Generation')
-    plt.xlabel('Time step')
-    plt.grid()
-    plt.tight_layout()
-    plt.show()
-
-    fig, ax = plt.subplots(int(len(l_nam) / 3) + 1, 3, figsize=(20, 15))
-    ax = ax.flatten()
-    for i, l in enumerate(l_nam):
-        Line_Flows.loc[l, :].plot(ax=ax[i])
-        ax[i].set_xlabel('time')
-        ax[i].set_ylabel(l)
-        ax[i].grid()
-    plt.tight_layout()
-    plt.show()
-
-    fig, ax = plt.subplots(int(len(gen_nam) / 4) + 1, 4, figsize=(20, 15))
-    ax = ax.flatten()
-    for i, g in enumerate(gen_nam):
-        PowerGenerated.loc[g, :].plot(ax=ax[i])
-        ax[i].set_xlabel('time')
-        ax[i].set_ylabel('Pgen ' + g)
-        ax[i].grid()
-    plt.title('Outage Schedule')
-    plt.tight_layout()
-    plt.show()
-
-
 def load_and_format_solution(solution_json_path, nodes_names, generators_names, outages, T):
     solution = load_json(solution_json_path)
     x_outage = []
@@ -321,68 +216,64 @@ def load_and_format_solution(solution_json_path, nodes_names, generators_names, 
     return X_sol, D_curt, P_gen
 
 
-def define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c):
-    """----  OBJECTIVE FUNCTION ---- :
-
-      1) Maximize number of scheduled outages weighted by priority
-      2) Value of loss load (VOLL). Minimize
-      3) Minimize "unitary" generation cost
-     """
-    # 1) PM
-    nt = len(T)
-    Objective_fun = quicksum(
-        (nt - t_idx) / nt * xt[t, o] * priority[o] * step_cost_outage[o] for t_idx, t in enumerate(T) for o in
-        names['outages'])
-
-    # 2) VOLL
-    scale_weight = (nt + len(names['buses']))
-    Objective_fun -= VOLL * quicksum(
-        d_wc[t, n] for n in names['buses'] for t in T) / scale_weight  # Add the curtailment term
-    Objective_fun -= VOLL * quicksum(
-        d_wc_c[t, n, c] for n in names['buses'] for c in names['contingencies'] for t in T) / (
-                                 scale_weight + len(names['contingencies']))
-
-    # 3) Operational costs
-    Objective_fun -= quicksum(pgen[t, g] for g in names['generators'] for t in T) / scale_weight
-    Objective_fun -= quicksum(pgen_c[t, g, c] for g in names['generators'] for c in names['contingencies'] for t in T) / (
-                                 scale_weight + len(names['contingencies']))
-    return Objective_fun
 
 
-def get_and_save_solution(M, save_res_dir=None, case_name=None, aggregation_time=None):
+import numpy as np
+from scipy.sparse import coo_matrix, hstack
 
-    if M.status == GRB.OPTIMAL:
-        logger.info(f"{green_c} Optimal solution found! :-) 🎉 :-) {reset_c}")
-    elif M.status == GRB.TIME_LIMIT:
-        logger.warning(f"{blue_c} Solution found with time limit! {reset_c}")
-    else :
-        logger.error(f"{red_c} Optimization ended with status: {M.status}{reset_c}")
 
-    if save_res_dir is None:
-        save_res_dir = "../data/results/deterministic_optimizer/optimal_solution" + case_name + '_' + aggregation_time + ".json"
+def build_nodal_incidence_matrix(names, g2bus, branches, T):
+    """
+    names['buses']: list of bus labels
+    g2bus:  list of length G mapping each generator index → its bus label
+    branches: list of (from_bus, to_bus) for each line
+    T:       list or range of time‐steps
+    """
+    buses = names['buses']
+    Bn, Tn = len(buses), len(T)
+    Gn, Ln = len(g2bus), len(branches)
 
-    # Check optimization status
-    solution = None
-    if M.status in {GRB.OPTIMAL, GRB.TIME_LIMIT, GRB.NODE_LIMIT, GRB.SUBOPTIMAL, GRB.USER_OBJ_LIMIT}:
-        solution = {v.VarName: v.X for v in M.getVars()}  # Retrieve and save variable values
-        with open(save_res_dir, "w") as f:  # Save the solution to a file or database
-            logger.info(f"{green_c} saving in: {reset_c} {save_res_dir}")
-            json.dump(solution, f)
+    bus2idx = {b:i for i,b in enumerate(buses)}
 
-    elif M.status == GRB.INFEASIBLE:
-        logger.warning(f"{red_c} M is Infeasible! :-(:-(:-({reset_c}")
-        logger.warning(f"{red_c} Run IIS to find conflicting constraints{reset_c}")
-        M.computeIIS()
-        logger.warning(f"{red_c} Writing IIS to a file for inspection {reset_c}")
-        M.write("M.ilp")
-        print("Conflicting constraints are:")
-        for c in M.getConstrs():
-            if c.IISConstr:
-                print(c.ConstrName)
+    rows, cols, data = [], [], []
 
-    elif M.status == GRB.UNBOUNDED:
-        logger.warning("Model is unbounded.")  # Save unbounded M status to log or file
-        with open("M_status.txt", "a") as f:
-            f.write("Model is unbounded.\n")
+    # --- 1) Flow incidence (size TB × (T·L)) ---
+    # for each time t and branch ℓ=(i→j),
+    #   injection at j += f_{t,ℓ}, at i -= f_{t,ℓ}
+    for t_idx, t in enumerate(T):
+        base_row = t_idx * Bn
+        base_col = t_idx * Ln
+        for ℓ, (i,j) in enumerate(branches):
+            # out of i
+            rows.append(base_row + bus2idx[i])
+            cols.append(base_col + ℓ)
+            data.append(-1)
+            # into j
+            rows.append(base_row + bus2idx[j])
+            cols.append(base_col + ℓ)
+            data.append(+1)
 
-    return solution
+    M_flow = coo_matrix(
+        (data, (rows, cols)),
+        shape=(Tn*Bn, Tn*Ln)
+    )
+
+    # --- 2) Generation incidence (size TB × (T·G)) ---
+    rows, cols, data = [], [], []
+    for t_idx, t in enumerate(T):
+        base_row = t_idx * Bn
+        base_col = t_idx * Gn
+        for g_idx, bus in enumerate(g2bus):
+            rows.append(base_row + bus2idx[bus])
+            cols.append(base_col + g_idx)
+            data.append(+1)         # generation adds injection
+
+    M_gen = coo_matrix(
+        (data, (rows, cols)),
+        shape=(Tn*Bn, Tn*Gn)
+    )
+
+    # --- 3) Horizontal stack to get full M ---
+    # Decision vector x_f should be ordered [f..., pgen...]
+    M = hstack([M_flow, M_gen], format='csr')
+    return M

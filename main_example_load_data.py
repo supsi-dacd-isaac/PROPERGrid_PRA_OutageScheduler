@@ -1,5 +1,5 @@
-from utils.dataloader import data_loader
-from utils.data_preporcess import aggregate_hourly_demand
+from pra_psa.utils.utils import *
+from pra_psa.utils.data_preporcess import aggregate_hourly_demand
 
 import matplotlib.pyplot as plt
 import pandapower.plotting as plot_net
@@ -22,6 +22,7 @@ if __name__ == '__main__':
     ax[1].set_title("IEEE 24-bus Network")
     plt.tight_layout()
     plt.show()
+
 
     # Plot demand data for IEEE 118-bus and IEEE 24-bus
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))

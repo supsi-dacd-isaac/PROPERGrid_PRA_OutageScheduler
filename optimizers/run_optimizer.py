@@ -1,77 +1,71 @@
-from optimizers.gurobi_SCOS_cvar import *
-from utils.data_preporcess import aggregate_hourly_demand, aggregate_step_costs_and_durations
+import os
+import sys
 
-def plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA):
+# Add the project root directory to Python path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    """ show some plots for a comparison between CVAR and DETERMINISTIC SCOScheduler"""
-    names = {
-        'outages': DATA['outages']['names'],  # List of outage names
-        'lines': [f'line_{ll}' for ll in range(DATA['num_branches'])],  # List of line names
-        'contingencies': DATA.get('n_minus1_names', None),  # List of contingency names
-        'buses': [f'bus_{b}' for b in range(DATA['num_buses'])],  # List of bus names
-        'generators': [f'gen_{g}' for g in DATA['network'].gen.index.tolist()],  # List of generator names
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from optimizers.gurobi_SCOS import *
+
+from optimizers.vis_scos_res import plot_comparison_CVAR_DET_SCOS
+
+from optimizers.pre_post_processing import (hash_simulation_params,  simulation_exists,  load_metadata, save_metadata)
+
+
+def run_optimizer(data, optimizer_type='deterministic', cvar_limit=50):
+    """
+    Run the specified optimizer on the given data.
+    Args:
+        data (dict): Dictionary containing the problem data
+        optimizer_type (str): Type of optimizer to use ('deterministic' or 'risk_aware')
+    Returns:
+        dict: Solution containing the optimal schedule and objective value
+    """
+    # Create results directory if it doesn't exist
+    results_dir = Path(f"results/{optimizer_type}_SCOP_optimizer")
+    results_dir.mkdir(exist_ok=True, parents=True)
+
+    # Generate simulation parameters and hash
+    params = {
+        'optimizer_type': optimizer_type,
+        'VoLL': data['VoLL'],
+        'tail_prob_constraint': data['tail_prob_constraint'],
+        'n_samples': data['n_samples'],
+        'use_DC_PF': data['use_DC_PF'],
+        'aggregation_step': data['config']['aggregation_time'],
+        'scaling_factor': data['config']['load_scaling_factor'],
+        'max_number_of_maintenance_tasks': data['max_number_of_maintenance_tasks']
     }
-    o_nam, gen_nam, l_nam = names['outages'], names['generators'], names['lines']
 
-    n_col = 2
-    n_rows = int(len(o_nam) / n_col)
-    fig, ax = plt.subplots(n_rows, n_col, figsize=(10, n_rows * 4))
-    ax = ax.flatten()
-    for results_dictionary, style in zip([dic_res_det[0], dic_res_cvar[0]], ['-', '--']):
+    # Check if simulation already exists
+    sim_hash = hash_simulation_params(params)
+    sim_filename = f"sim_{sim_hash}"
 
-        X_OutageSchedule = results_dictionary["X_OutageSchedule"]
-        o_nam, gen_nam, l_nam = names['outages'], names['generators'], names['lines']
+    if simulation_exists(results_dir, sim_filename):
+        logging.info(f"Loading existing simulation results for {sim_filename}")
+        return load_metadata(results_dir, sim_filename)
 
-        # Loop through outages and plot on each axis
-        for i, o in enumerate(o_nam):
-            if i < len(ax):  # Ensure we don't index beyond available axes
-                if i == 0:
-                    if style == '-':
-                        X_OutageSchedule.loc[o, :].plot(ax=ax[i], linestyle=style, label=f'det-SCOP')
-                    else:
-                        X_OutageSchedule.loc[o, :].plot(ax=ax[i], linestyle=style, label=f'CVaR-SCOP')
-                else:
-                    X_OutageSchedule.loc[o, :].plot(ax=ax[i], linestyle=style)
-                ax[i].set_xlabel('Time')
-                ax[i].set_ylabel(f'Outage {o}')
-                ax[i].set_title(f'Outage Schedule for {o}')
-                ax[i].grid()
-                ax[i].legend()  # Add legend
-                ax[i].tick_params(axis='x', rotation=45)  # Rotate x-tick labels
+    # Run the appropriate optimizer
+    if optimizer_type == 'deterministic':
+        results_dictionary, solution, Objective_optimal_val = run_SCOS_deterministic(data)
+    elif optimizer_type == 'risk_aware':
+        results_dictionary, solution, Objective_optimal_val = run_SCOS_cvar(data)
+    elif optimizer_type == 'risk_constrained':
+        results_dictionary, solution, Objective_optimal_val = run_SCOS_cvar(data, cvar_limit=cvar_limit)
+    else:
+        logging.error(f"Invalid optimizer type: {optimizer_type}")
+        raise ValueError(f"Unknown optimizer type: {optimizer_type}")
 
-    # Hide unused axes if any
-    for j in range(len(o_nam), len(ax)):
-        fig.delaxes(ax[j])
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    fig.suptitle('Outage Schedule', fontsize=16)
-    plt.show()
+    # Check if optimization was successful
+    if results_dictionary is None or solution is None or Objective_optimal_val is None:
+        logging.error(f"Optimization failed for {optimizer_type}")
+        return None, None, None, None
 
-    # Plot the power generation for each generator
-    n_line2_plot = 15
-    fig, ax = plt.subplots(int(len(l_nam[:n_line2_plot]) / 3), 3, figsize=(20, 15))
-    ax = ax.flatten()
-
-    for results_dictionary, style in zip([dic_res_det[0], dic_res_cvar[0]], ['-', '--']):
-
-        Line_Flows = results_dictionary["Line_Flows"]
-
-        for i, l in enumerate(l_nam[:n_line2_plot]):
-            if i < len(ax):  # Ensure we don't index beyond available axes
-                if i == 0:
-                    if style == '-':
-                        Line_Flows.loc[l, :].plot(ax=ax[i], linestyle=style, label=f'det-SCOP')
-                    else:
-                        Line_Flows.loc[l, :].plot(ax=ax[i], linestyle=style, label=f'CVaR-SCOP')
-                else:
-                    Line_Flows.loc[l, :].plot(ax=ax[i], linestyle=style)
-                ax[i].set_xlabel('Time')
-                ax[i].set_ylabel(l)
-                ax[i].grid()
-                ax[i].legend()  # Add legend
-
-    # Adjust layout and add a title
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    plt.show()
+    # Save results
+    save_metadata(results_dictionary, results_dir, sim_filename, solution=solution, objective=Objective_optimal_val, params=params)
+    return results_dictionary, solution, Objective_optimal_val, params
 
 
 # Example How to run
@@ -79,50 +73,37 @@ if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """
 
     # Load system data and historical nodal demand data
-    network, hourly_demand, config = data_loader('../config/conf_IEEE24.json')
-    aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.
+    config_path  = 'config/conf_IEEE24.json'
+    DATA = load_data_from_conf_grid_case(conf_path=config_path)
+    names = DATA['names']
 
-    # Define PM activities (planned outages)
-    comp_types = ['line', 'line', 'line', 'line', 'line', 'line', 'gen', 'gen']
-    comp_ids = [0, 1, 2, 3, 5, 8, 1, 2]
-    cost_per_days = [1000, 2000, 1000, 1000, 2000, 2000, 5000, 5000]  # m.u/day
-    expected_duration_days = [25, 7, 55, 7, 30, 30, 30, 60]  # days/PM
-    priorities = [1, 2, 1, 3, 2, 1, 1, 3]  # high = 3, medium = 2, low = 1
-    # planned_outage_names = ['line_0', 'line_1', 'line_2', 'line_3', 'line_5', 'line_8', 'gen_1', 'gen_2']
-    planned_outage_names = [f'{type}_{idx}' for idx, type, in zip(comp_ids, comp_types)]
+    params = {
+        'config_path': config_path,
+        'VoLL': DATA['VoLL'],
+        'tail_prob_constraint': DATA['tail_prob_constraint'],
+        'n_samples': DATA['n_samples'],
+        'use_DC_PF': DATA['use_DC_PF'],
+        'aggregation_step': DATA['config']['aggregation_time'],
+        'scaling_factor': DATA['config']['load_scaling_factor'],
+        'max_number_of_maintenance_tasks': DATA['max_number_of_maintenance_tasks']
+    }
 
-    # aggregate power demand data (.mean()  .max()) over aggregation_step in { 'W', 'D', '12H',..., 'H'}
-    nodal_demand_aggregated = aggregate_hourly_demand(hourly_demand*0.8,  aggregation_step=aggregation_step)
+    # Run deterministic optimization
+    print("Running deterministic optimization...")
+    det_results = run_optimizer(DATA, optimizer_type='deterministic')
 
-    # scale PM params: [cost/step], duration [steps]
-    PM_cost_per_step, PM_duration_steps = aggregate_step_costs_and_durations(cost_per_days,
-                                                                             expected_duration_days,
-                                                                             aggregation_step=aggregation_step)
+    # Run risk-aware optimization
+    print("Running risk-aware optimization...")
+    risk_results = run_optimizer(DATA, optimizer_type='risk_aware')
 
-    # example scheduled outage information
-    outages = {'indices': comp_ids,  'names': planned_outage_names,
-               'type': comp_types,  'expected_duration_steps': PM_duration_steps,
-               'cost_per_step': PM_cost_per_step,  'priorities': priorities}
 
-    num_branches = len(network.trafo) + len(network.line)
-    num_buses = len(network.bus)
-    branch_capacity = [175 if max_i_ka <= 1 else 500 for max_i_ka in network.line['max_i_ka']] + [400 for _ in network.trafo]
+    # Run risk-aware optimization
+    print("Running risk-aware optimization...")
+    risk_results = run_optimizer(DATA, optimizer_type='risk_constrained')
 
-    DATA = {'max_number_of_maintenance_tasks': 2,
-            'nodal_demand': nodal_demand_aggregated,
-            'outages': outages,
-            'config': config,
-            'network': network,
-            'num_buses': num_buses,
-            'num_branches': num_branches,
-            'ref_buses': ['bus_12'],
-            'branch_capacity': branch_capacity,
-            'n_minus1_names': [f'n1_{l}' for l in [f'line_{k}' for k in range(30)]]}
 
-    # Run the Gurobi optimizations
-    VoLL, n_samples = 1e6, 10
-    use_DC_PF = False
-    dic_res_det = deterministic_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF)
-    dic_res_cvar  = CVAR_SCOS_gurobi(DATA, VOLL=VoLL, use_DC_PF=use_DC_PF, alpha=0.9, n_samples=100)
+    # Compare results
+    plot_comparison_CVAR_DET_SCOS(risk_results[0], det_results[0], DATA)
 
-    plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA)
+    print("Objective (DET):", det_results[2])
+    print("Objective (RISK):", risk_results[2])

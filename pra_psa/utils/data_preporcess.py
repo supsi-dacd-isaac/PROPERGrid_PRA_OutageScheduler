@@ -1,5 +1,4 @@
-from utils.utils import *
-from utils.dataloader import *
+from pra_psa.utils.utils import *
 
 
 def build_incidence_matrix(from_to_bus, num_buses, num_lines):
@@ -18,10 +17,9 @@ def build_susceptance_matrix(from_to_bus, B, num_buses, num_lines):
     return B_k_l
 
 
-def aggregate_hourly_demand(data, start_date='2023-01-01 00:00', aggregation_step='D'):
-    """
-    Aggregates hourly nodal demand by a specified step (e.g., daily, weekly).
-    Returns: pd.DataFrame: A DataFrame with the aggregated demand using the maximum value over the specified step.
+def aggregate_hourly_demand(data,  start_date='2023-01-01 00:00',  aggregation_step='D'):
+    """ Aggregator hourly nodal demand by a specified step (e.g., daily, weekly).
+        Returns: pd.DataFrame: A DataFrame with the aggregated demand using the maximum value over the specified step.
     """
     df_loads_24 = pd.DataFrame(data.values, columns=data.columns, index=pd.date_range(start_date, periods=len(data), freq='h'))
     if not pd.api.types.is_datetime64_any_dtype(df_loads_24.index):  # Ensure that the DataFrame index is a datetime index for proper resampling
@@ -34,12 +32,12 @@ def aggregate_step_costs_and_durations(cost_per_days, expected_duration_days, ag
     Aggregates step costs and durations based on the given aggregation step.
 
     Parameters:
-    cost_per_days (list): List of cost per day for each task
-    expected_duration_days (list): List of expected durations in days for each task
-    aggregation_step (str): The time step for aggregation ('H' for hours, 'W' for weeks, 'D' for days, etc.)
+        cost_per_days (list): List of cost per day for each task
+        expected_duration_days (list): List of expected durations in days for each task
+        aggregation_step (str): The time step for aggregation ('H' for hours, 'W' for weeks, 'D' for days, etc.)
 
     Returns:
-    tuple: Aggregated costs and durations for the chosen aggregation step
+        tuple: Aggregated costs and durations for the chosen aggregation step
     """
 
     # Define the conversion factors for each aggregation step
@@ -72,25 +70,25 @@ def aggregate_step_costs_and_durations(cost_per_days, expected_duration_days, ag
 
 def prepare_data_for_outage_scheduling_problem(conf_path: str):
     """ Prepare data for the outage scheduling problem """
-    panda_power_network, df_hourly_nodal_demand, conf = data_loader(conf_path)
-    if panda_power_network is None or df_hourly_nodal_demand is None:
+    ppow_net, df_hourly_nodal_demand, conf = data_loader(conf_path)
+    if ppow_net is None or df_hourly_nodal_demand is None:
         logging.error("Data loading failed. Cannot prepare data for the outage scheduling problem.")
         return None
 
     # incidence matrix with elements S_{l,k} = -1 if line l 'enters' bus k, 1 if line l 'leaves' bus k, 0 otherwise
-    S_lk = panda_power_network._ppc["internal"]["Cft"].A
+    S_lk = ppow_net._ppc["internal"]["Cft"].A
 
     # Susceptance line-bus matrix with elements B_{l,k} = -Bl if line l 'enters' bus k, Bl if line l 'leaves' bus k, 0 otherwise
-    B_lk = panda_power_network._ppc["internal"]["Bf"].A
+    B_lk = ppow_net._ppc["internal"]["Bf"].A
 
     df_daily_nodal_demand = aggregate_hourly_demand(df_hourly_nodal_demand)
 
 
     # Extract bus and line information from the pandapower network
-    buses = panda_power_network.bus
-    lines = panda_power_network.line
-    generators = panda_power_network.gen
-    transformers = panda_power_network.trafo
+    buses = ppow_net.bus
+    lines = ppow_net.line
+    generators = ppow_net.gen
+    transformers = ppow_net.trafo
 
     # Extract necessary information from buses, lines, and generators
     bus_info = buses[['name', 'vn_kv', 'type']]  # Bus voltage levels and types
@@ -104,7 +102,7 @@ def prepare_data_for_outage_scheduling_problem(conf_path: str):
         "generators": gen_info,
         "transformers": transformers,
         "hourly_nodal_demand": df_hourly_nodal_demand,  # Hourly demand for each bus
-        "network": panda_power_network  # Complete pandapower network object for further reference
+        "network": ppow_net  # Complete pandapower network object for further reference
     }
 
     return outage_scheduling_data
@@ -122,8 +120,9 @@ def prepare_data_4_gurobi_security_constrained_outage_planning(data, names):
 
     # Precompute generator to node mapping
     gen_to_node = {b: names['generators'][idx] for idx, b in enumerate(g2bus)}
-    # Precompute the transposed S matrix
-    # to avoid repeated computations  S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
+    # Precompute the transposed S matrix to avoid repeated computations
+    # S[l,b]=1   if line l 'enters'  in bus b,
+    # S[l,b]=-1  if line l 'exits' from bus b
     S = net._ppc["internal"]['Cft'].A.T
     B_mat = np.real(net._ppc["internal"]['Bf'].A)
     B_lines = np.max(B_mat, axis=1)
