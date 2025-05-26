@@ -1,6 +1,6 @@
 from optimizers.gurobi_SCOS import *
 from utils.data_preporcess import aggregate_hourly_demand, aggregate_step_costs_and_durations
-from config.logger_config import *
+from config.config import *
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
 

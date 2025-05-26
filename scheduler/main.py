@@ -1,6 +1,6 @@
 from scheduler.dataprocess import get_solution_dic, prepare_data
 from scheduler.variables import add_variables
-from scheduler.constraints import add_planned_outages_constraints, add_all_generator_constraints, add_line_power_limit_constraints, add_nodal_power_balance_constraints, add_nodal_power_balance_constraints_sparse
+from scheduler.constraints import add_planned_outages_constraints, add_all_generator_constraints, add_line_power_limit_constraints, add_nodal_power_balance_constraints
 from scheduler.objective import objective_function
 from scheduler.visualize import visualize_results
 from gurobipy import Model, GRB
@@ -21,6 +21,7 @@ def main():
     model = add_all_generator_constraints(model=model, variables=VARIABLES, data=DATA)
     model = add_line_power_limit_constraints(model=model, variables=VARIABLES, data=DATA)
     model = add_nodal_power_balance_constraints(model=model, variables=VARIABLES, data=DATA)
+
     # model = add_nodal_power_balance_constraints_sparse(model=model, variables=VARIABLES, data=DATA)
 
     # @title SOLVE the Model
