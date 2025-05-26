@@ -3,7 +3,6 @@ import numpy as np
 from optimizers.utils_and_constraints import *
 from utils.data_preporcess import aggregate_hourly_demand as aggregate
 
-# TODO: UPDATE V0 class for the outage scheduling problem
 class outage_scheduler:
     """  OUTAGE SCHEDULER CLASS  """
 
@@ -63,7 +62,6 @@ class outage_scheduler:
 
         # Define constraints
         self._add_all_constraints()
-
 
     def _initialize_variables(self):
         """  Add decision variables to the model. """
@@ -182,7 +180,6 @@ class outage_scheduler:
             # 2.2) Ensure xt = 1 if started but not ended
             for t_idx, t in enumerate(self.names['T']):
                 self.model.addConstr(self.start_time[t, o] - self.end_time[t, o] == self.X[t, o], name=f"Cont_start_end_x_{o}_{t}")
-
 
     def _add_generators_constraints(self):
 
@@ -318,7 +315,6 @@ class outage_scheduler:
                     self.model.addConstr(cnt1, name=f"Flow_{t}_{l}_{c}_UP")
                     self.model.addConstr(cnt2, name=f"Flow_{t}_{l}_{c}_LOW")
                     self.model.addConstr(cnt_dc, name=f"Flow_{t}_{l}_{c}_DC_eq")
-
 
     def _add_nodal_power_balance_constraints(self):
 
