@@ -1,11 +1,11 @@
-import pandapower as pp
-import pandapower.networks as pn
-import numpy as np
-from pra_psa.reliability_performance import *
-from utils.dataloader import data_loader
-from utils.utils import *
-from pra_psa.contingency_analysis import *
-from tqdm import tqdm
+from pra_psa.core.contingency_analysis import *
+from tqdm import tqdm 
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class NaiveProbLoadModel:
@@ -19,7 +19,7 @@ class NaiveProbLoadModel:
 
 class NaiveProbFailureModel:
     def __init__(self):
-        self.model_params=(0.05, 0.3)
+        self.model_params = (0.05, 0.3)
 
     def get_probabilities(self, failure_set, state=None):
         """ example of occurrence probability for the contingency set (independent of the system state and uniform in this naive case)"""

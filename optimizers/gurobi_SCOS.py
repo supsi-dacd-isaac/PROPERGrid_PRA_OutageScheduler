@@ -1,6 +1,7 @@
 from gurobipy import Model, GRB, quicksum, GurobiError
 from utils.dataloader import *
-from optimizers.utils_and_constraints import get_and_save_solution, visualize_results
+from optimizers.utils_and_constraints import get_and_save_solution
+from utils_and_constraints import visualize_results
 from tqdm import tqdm
 
 
@@ -231,6 +232,9 @@ def prepare_guroby_SCOS_data(data, names):
 
 def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None):
     """ Deterministic security-constrained outage planner"""
+    # todo:
+    #  1. check if adding DC power flow equations and voltage angles makes it more interesting.
+    #  2. added big-M linear constraints to replace quadratic y(1-x) <= b terms on the dc power flow equations
 
     names = {
             'outages': data['outages']['names'],  # List of outage names

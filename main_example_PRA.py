@@ -1,4 +1,4 @@
-from utils.dataloader import data_loader
+from pra_psa.utils.utils import *
 from pra_psa.risk_assessment import runPRA
 
 if __name__ == '__main__':

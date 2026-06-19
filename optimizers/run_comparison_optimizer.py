@@ -1,8 +1,6 @@
 from optimizers.gurobi_SCOS_cvar import *
 from utils.data_preporcess import aggregate_hourly_demand, aggregate_step_costs_and_durations
 
-from config.config import *
-
 def plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA):
 
     """ show some plots for a comparison between CVAR and DETERMINISTIC SCOScheduler"""
