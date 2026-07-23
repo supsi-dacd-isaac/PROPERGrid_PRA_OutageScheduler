@@ -1,22 +1,21 @@
 """ PROPERGrid - Tools for Probabilistic Risk-Informed Operational Scheduling for Power Grids """
 
 from pra_psa.risk_assessment import runPRA, NaiveProbLoadModel, NaiveProbFailureModel
-from pra_psa.probabilistic_models.probabilisticmodel import Demand_sampler, Probability_model_nodal_load
-from pra_psa.simulation.subset_simulation import subset_simulation
-from pra_psa.simulation.monte_carlo import monte_carlo_simulation
-from pra_psa.simulation.importance_sampling import importance_sampling
-from pra_psa.simulation.mcmc_sampling import mcmc_sampling
+#from pra_psa.simulation.subset_simulation import subset_simulation
+subset_simulation= []
+#from pra_psa.simulation.monte_carlo import monte_carlo_simulation
+#from pra_psa.simulation.importance_sampling import importance_sampling
+#from pra_psa.simulation.mcmc_sampling import mcmc_sampling
 from pra_psa.core.contingency import generate_n1_contingencies, generate_nk_contingencies
-from pra_psa.core.powerflow import run_ac_powerflow, run_dc_powerflow
+#from pra_psa.core.powerflow import run_ac_powerflow, run_dc_powerflow
 from pra_psa.core.contingency_analysis import analyze_contingency
 
 # Import advanced models directly
-from pra_psa.probabilistic_models.advanced_models import GaussianMixtureModel, CopulaModel, TimeSeriesModel
 
 # Version information
 __version__ = "0.1.0"
 __author__ = "PROPERGrid Team"
-__email__ = "contact@propergrid.org"
+__email__ = "roberto.rocchetta@supsi.ch"
 
 # Main classes for the unified API
 class RiskAssessment:
@@ -58,7 +57,7 @@ class RiskAssessment:
         Returns
         -------
         dict
-            Risk assessment results including worst-case loading and safety indicators
+            Risk assessment schedule_results including worst-case loading and safety indicators
         """
         return runPRA(
             network=network,
@@ -164,7 +163,7 @@ class Scheduler:
         Returns
         -------
         dict
-            Optimization results including the optimal schedule
+            Optimization schedule_results including the optimal schedule
         """
         # This is a placeholder for future implementation
         raise NotImplementedError("Optimization not yet implemented")
@@ -188,7 +187,7 @@ class Scheduler:
     
     def save_report(self, file_path):
         """
-        Save the optimization results as a report.
+        Save the optimization schedule_results as a report.
         
         Parameters
         ----------

@@ -1,7 +1,8 @@
 from gurobipy import Model, GRB
-import numpy as np
 from optimizers.utils_and_constraints import *
+from utils.data_preporcess import *
 from utils.data_preporcess import aggregate_hourly_demand as aggregate
+
 
 class outage_scheduler:
     """  OUTAGE SCHEDULER CLASS  """
@@ -376,7 +377,7 @@ class outage_scheduler:
 
         if save_res_name is None:
             save_res_name = "optimal_solution" + self.names['case_name'] + '_' + self.params['aggregation_time'] + ".json"
-            save_res_name = '../data/results/deterministic_optimizer/' + save_res_name
+            save_res_name = '../data/schedule_results/deterministic_optimizer/' + save_res_name
 
             # ----  SOLVE the M
             self.model.setParam('MIPGap', 0.1)  # Acceptable optimality gap
@@ -430,7 +431,7 @@ class outage_scheduler:
 if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """
     # Load data
-    network, hourly_demand, config = data_loader('../config/conf_IEEE24.json')
+    network, hourly_demand, config = data_loader('../config/conf_IEEE24_scheduler.json')
     aggregation_step = config['aggregation_time']  # 'W', 'D', 'H
     cost_per_days = [1000, 2000, 1000, 1000, 2000, 1000, 2000, 5000, 10]
     expected_duration_days = [25, 14, 55, 14, 30, 30, 30, 60, 20]

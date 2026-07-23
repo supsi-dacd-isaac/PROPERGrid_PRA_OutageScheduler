@@ -1,23 +1,171 @@
+
 from optimizers.gurobi_SCOS import *
-from utils.data_preporcess import aggregate_hourly_demand, aggregate_step_costs_and_durations
-from config.config import *
+from scheduler.utils_pre_process import aggregate_hourly_demand, aggregate_step_costs_and_durations
+
+# ANSI escape code for colored text
+blue_c, green_c, purple_c, cyan_c, red_c, gray_c = "\033[94m", "\033[92m", "\033[95m", "\033[96m", "\033[91m", " "
+bold_c, underline_c, reset_c = "\033[1m", "\033[4m", "\033[0m"
+
+# logging details
+logger = logging.getLogger()
+logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
+
+
+"""def get_project_root() -> Path: 
+    return Path(__file__).parent.parent
+"""
+
+from scipy import sparse
+
+
+def as_dense_array(matrix) -> np.ndarray:
+    """Convert a SciPy sparse matrix/array or dense object to ndarray."""
+    if sparse.issparse(matrix):
+        return matrix.toarray()
+
+    return np.asarray(matrix)
+
+
+def get_project_root(marker_files: Sequence[str] = (".git", "pyproject.toml", "setup.py")) -> Path:
+    """
+    Return the root of the project by looking for one of the given marker files/directories.
+    Starts from this file and walks up until it finds a parent containing any marker.
+    Raises FileNotFoundError if no marker is found.
+    """
+    # First try to find a directory named "PROPER"
+    current = Path(__file__).resolve()
+    logging.info(f"Current file path: {current}")
+
+    for directory in (current, *current.parents):
+        logging.info(f"Checking directory: {directory}")
+        if directory.name == "PROPER":
+            logging.info(f"Found PROPER directory: {directory}")
+            return directory
+
+    # If not found, fall back to marker files
+    for directory in (current, *current.parents):
+        if any((directory / m).exists() for m in marker_files):
+            logging.info(f"Found marker file in: {directory}")
+            return directory
+
+    raise FileNotFoundError(f"Could not find project root (searched for {marker_files!r})")
+
+
+def load_json(file_path):
+    """load json file"""
+    with open(file_path, 'r') as file:
+        data = json.load(file)
+    return data
+
+
+def load_matlab_data(conf: dict, file_name: str = 'hourlyDemandBus.mat', feature_name: str = 'hourlyDemandBus'):
+    """ Load matlab data """
+    data_path = os.path.join(get_project_root(), conf['data_path'], conf['case_name'], file_name)
+    try:
+        logging.info(f'Loading {file_name}')
+        mat_data = loadmat(data_path)
+        hourly_loads = pd.DataFrame(mat_data[feature_name].T)
+        try:
+            bus_name_path = os.path.join(get_project_root(), conf['data_path'], conf['case_name'], 'bus_names.json')
+            if os.path.exists(bus_name_path):
+                bus_names = load_json(bus_name_path)
+                bus_names = [val for _, val in bus_names.items()]
+            else:
+                logging.info(f"Bus names file not found at {bus_name_path}, using default names")
+                bus_names = ['bus_' + str(i) for i in range(hourly_loads.shape[1])]
+        except Exception as e:
+            logging.warning(f"Error loading bus names: {e}, using default names")
+            bus_names = ['bus_' + str(i) for i in range(hourly_loads.shape[1])]
+        if len(hourly_loads.columns) == len(bus_names):
+            hourly_loads.columns = bus_names
+        return hourly_loads
+
+    except FileNotFoundError:
+        logging.error(f"File {data_path} not found")
+        return None
+
+
+def load_network(conf: dict):
+    """ Dynamically load the network using getattr from pandapower networks"""
+    try:
+        logging.info('Loading network model')
+        return getattr(networks, conf["panda_power_case_name"])()
+    except AttributeError:
+        logging.error(f"Network model {conf['panda_power_case_name']} not found")
+        return None
+
+
+def data_loader(conf_path: str):
+    """load data from the configuration file"""
+    # Get the project root directory
+    project_root = get_project_root()
+
+    # Convert to absolute path if it's relative
+    if not os.path.isabs(conf_path):
+        # Use project root as the base for relative paths
+        conf_path = os.path.join(project_root, conf_path)
+
+    # Normalize the path to remove any '..' or '.' components
+    conf_path = os.path.normpath(conf_path)
+
+    logging.info(f"Loading configuration from: {conf_path}")
+    conf = load_json(conf_path)
+    panda_power_network = load_network(conf)
+    try:
+        logging.info("running DC power flow calculation....for _ppc initialization.")
+        pp.rundcpp(panda_power_network)
+    except:
+        logging.warning("DC power flow calculation failed for this system. Proceeding without _ppc initialization.")
+    df_hourly_nodal_demand = load_matlab_data(conf)
+    return panda_power_network, df_hourly_nodal_demand, conf
+
+
+def plot_show(val, xlb: str = 'x', ylb: str = 'y', ax=None, **kwargs):
+    """  Plot and show """
+    if ax is None:
+        plt.plot(val, **kwargs)
+        plt.ylabel(ylb)
+        plt.xlabel(xlb)
+        plt.grid()
+        plt.show()
+    else:
+        ax.plot(val, **kwargs)
+        ax.set_ylabel(ylb)
+        ax.set_xlabel(xlb)
+        ax.grid()
+        return ax
+
+
+def plot_ecdf_show(val, xlb: str = 'x', ylb: str = 'ecdf', **kwargs):
+    """  Plot the empirical cumulative distribution function (ECDF) for given values.   """
+    # Prepare ECDF plotting
+    ecdf = ECDF(val)
+    x = np.sort(val)  # Sort the values for plotting
+    y = ecdf(x)  # Get ECDF values for x
+
+    plt.step(x, y, where='post', **kwargs)  # Use step plot for ECDF
+    plt.ylabel(ylb)
+    plt.xlabel(xlb)
+    plt.grid(True)
+    plt.show()
 
 
 def prepare_data(conf_path = None):
     # Load system data and historical nodal demand data
     if conf_path is None:
-        conf_path = '../config/conf_IEEE24.json'
+        conf_path = '../config/conf_IEEE24_scheduler.json'
 
     network, hourly_demand, config = data_loader(conf_path)
     aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.
     # Define PM activities (planned outages)
-    comp_types = ['line', 'line', 'line', 'line', 'line', 'line', 'gen', 'gen']
-    comp_ids = [0, 1, 2, 3, 5, 8, 1, 2]
-    cost_per_days = [1000, 2000, 1000, 1000, 2000, 2000, 5000, 5000]  # m.u/day
-    expected_duration_days = [25, 7, 55, 7, 30, 30, 30, 60]  # days/PM
-    priorities = [1, 2, 1, 3, 2, 1, 1, 3]  # high = 3, medium = 2, low = 1
+    comp_types = config['comp_types']
+    comp_ids = config['comp_ids']
+    cost_per_days = config['cost_per_days']  # m.u/day
+    expected_duration_days = config['expected_duration_days']  # days/PM
+    priorities = config['priorities']  # high = 3, medium = 2, low = 1
     planned_outage_names = [f'{type}_{idx}' for idx, type, in zip(comp_ids, comp_types)]
 
     # PREPARE DATA INPUT DICTIONARY
@@ -72,9 +220,23 @@ def prepare_data(conf_path = None):
 
     # Precompute generator to node mapping
     DATA['gen_to_node'] = {b: names['generators'][idx] for idx, b in enumerate(DATA['g2bus'])}
-    DATA['S'] = DATA['network']._ppc["internal"]['Cft'].A.T  # S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
-    DATA['B_mat'] = np.real(DATA['network']._ppc["internal"]['Bf'].A)
-    DATA['B_lines'] = np.max(DATA['B_mat'], axis=1)
+    #DATA['S'] = DATA['network']._ppc["internal"]['Cft'].A.T  # S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
+    #DATA['B_mat'] = np.real(DATA['network']._ppc["internal"]['Bf'].A)
+
+
+    # Pandapower/PYPOWER internal matrices
+    internal_ppc = DATA["network"]._ppc["internal"]
+    Cft = as_dense_array(internal_ppc["Cft"])
+    Bf = as_dense_array(internal_ppc["Bf"])
+
+    #print("Cft:", Cft.shape)
+    #print("Expected branches:", DATA["num_branches"])
+    #print("Expected buses:", DATA["num_buses"])
+
+    # Preserve the orientation used by the existing implementation
+    DATA["S"] = Cft.T
+    DATA["B_mat"] = np.real(Bf)
+    DATA["B_lines"] = np.max(DATA["B_mat"], axis=1)
 
     # Pre-fetch some values for efficiency
     DATA['priority'] = {o_nam: DATA['outages']['priorities'][o] for o, o_nam in enumerate(names['outages'])}

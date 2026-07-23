@@ -1,13 +1,13 @@
 from gurobipy import Model, GRB, quicksum, GurobiError
-from utils.dataloader import *
-from optimizers.utils_and_constraints import get_and_save_solution
-from utils_and_constraints import visualize_results
-from tqdm import tqdm
+from visualization.visualize_schedule import visualize_results
+from utils.utils import *
+from optimizers.run_optimizer import get_and_save_solution
 
 
 logging.basicConfig(level=logging.WARN)
 logger = logging.getLogger()
 
+"""from optimizers.utils_and_constraints import get_and_save_solution"""
 
 def initialize_variables(M, names, T):
     """ define VARIABLES for the SCOS problem """
@@ -20,21 +20,17 @@ def initialize_variables(M, names, T):
     d_wc_c = M.addVars(T, names['buses'], names['contingencies'], lb=0, name="loss_of_load_contingency")
     f = M.addVars(T, names['lines'], lb=-GRB.INFINITY, ub=GRB.INFINITY, name="flow_tl")
     f_c = M.addVars(T, names['lines'], names['contingencies'], lb=-GRB.INFINITY, ub=GRB.INFINITY, name="flow_tl_contingency")
-
     logger.info(f' \n'
                 f'{blue_c}Variables Added:{reset_c}\n'
                 f' - {blue_c}xt, sxt, ext{reset_c}: s Scheduled outage decisions, start-end indicators for the outage task\n'
                 f' - {blue_c}pgen, pgen_c{reset_c}: Generated power planned and N-1 states\n'
                 f' - {blue_c}d_cut, d_cut_c{reset_c}: loss of load planned and N-1 states\n'
                 f' - {blue_c}f, f_c{reset_c}: Power flow in planned and N-1 states\n')
-
     return M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c
 
 
 def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = None):
-    """
-    Calculate inflows, generation, and nodal balance for a given set of parameters.
-
+    """  Calculate inflows, generation, and nodal balance for a given set of parameters.
     Parameters:
         T (list): Time steps.
         f (ndarray): Flow data.
@@ -43,13 +39,10 @@ def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = Non
         pgen (ndarray): Generation data.
         gen_to_node (dict): Mapping of generators to bus nodes.
         demand (DataFrame): Demand values.
-
     Returns:
         nodal_balance (ndarray): The calculated nodal balance.
     """
-    inflows_mat = []
-    generation_all = []
-
+    inflows_mat, generation_all = [], []
     for t in T:
         if c is None:
             flows_t = np.array([f[t, l] for l in names['lines']])  # Flow values for current time step
@@ -57,14 +50,10 @@ def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = Non
             flows_t = np.array([f[t, l, c] for l in names['lines']])  # Flow values for current time step
 
         # Calculate inflows at each bus
-        flows_con_t = [
-            np.sum(S_T[b_idx, :][np.argwhere(S_T[b_idx, :]).flatten()] *
-                   flows_t[np.argwhere(S_T[b_idx, :]).flatten()])
-            for b_idx in range(len(names['buses']))
-        ]
+        flows_con_t = [np.sum(S_T[b_idx, :][np.argwhere(S_T[b_idx, :]).flatten()] *
+                              flows_t[np.argwhere(S_T[b_idx, :]).flatten()]) for b_idx in range(len(names['buses'])) ]
 
-        # Calculate generation at each bus
-        if c is None:
+        if c is None: # Calculate generation at each bus
             generators_t = [pgen[t, gen_to_node[b]] if b in gen_to_node else 0 for b in names['buses']]
         else:
             generators_t = [pgen[t, gen_to_node[b], c] if b in gen_to_node else 0 for b in names['buses']]
@@ -72,14 +61,9 @@ def calculate_nodal_balance(T, f, names, S_T, pgen, gen_to_node, demand, c = Non
         inflows_mat.append(flows_con_t)
         generation_all.append(generators_t)
 
-    # Convert lists to NumPy arrays and remove any extra dimensions
-    inflows_mat = np.squeeze(np.array(inflows_mat))
+    inflows_mat = np.squeeze(np.array(inflows_mat))  # Convert lists to NumPy arrays and remove any extra dimensions
     generation_all = np.squeeze(np.array(generation_all))
-
-    # Calculate nodal balance
-    nodal_balance = demand.values - inflows_mat - generation_all
-
-    return nodal_balance
+    return demand.values - inflows_mat - generation_all  # Calculate nodal balance
 
 
 def add_planned_outages_constraints(M, o_nam, xt, sxt, ext, max_tasks, durations, T):
@@ -99,7 +83,6 @@ def add_planned_outages_constraints(M, o_nam, xt, sxt, ext, max_tasks, durations
 
 def add_generators_constraints(M, xt, names, pgen, pgen_c, p_max, p_min, T):
     for t_idx, t in tqdm(enumerate(T), desc="Adding Constraints", total=len(T), ncols=100, colour="green"):
-
         for g in names['generators']:  # Constraints with/without scheduled outage
             if (g in names['outages']):
                 M = add_gen_bounds(M, pgen, p_max, p_min, t, g, c=None, xt=xt[t, g])
@@ -353,19 +336,6 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
                                 aux_var = B_delta_theta_con  # No outage
                             M.addConstr(f_c[t, l, c] == aux_var, name=f"Flow_{t}_{l}_{c}_DC_eq")
 
-                            """ # Add linear constraints for z[t, l]
-                            if is_outage:
-                                # Constrain z_aux_pf to represent (1 - x[t, l]) * delta_theta
-                                M.addConstr(z_aux_pf[t, l] <= B_delta_theta)
-                                M.addConstr(z_aux_pf[t, l] >= B_delta_theta - bigM * xt[t, l])
-                                M.addConstr(z_aux_pf[t, l] <= bigM * (1 - xt[t, l]))
-                                M.addConstr(z_aux_pf[t, l] >= -bigM * (1 - xt[t, l]))
-                                outage_factor = z_aux_pf[t, l]
-                            else:
-                                outage_factor = B_delta_theta  # No outage
-
-                            M.addConstr(f[t, l] == outage_factor, name=f"Flow_{t}_{l}_DC_eq")"""
-
 
         # ----  SOLVE the M
         M.setParam('MIPGap', 0.05)  #  Acceptable optimality gap
@@ -376,29 +346,13 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
 
         # Check optimization status
-        save_res_dir = ("../data/results/deterministic_optimizer/optimal_solution" +
+        save_res_dir = ("../data/schedule_results/deterministic_optimizer/optimal_solution" +
                         data['config']['case_name'] + '_' + data['config']['aggregation_time'] + ".json")
 
         M.update()
 
-        """        try:
-            #todo: add warm start to CvaR optim too
-            M.params.StartNumber = 2
-            with open(save_res_dir, "r") as f: # Load the solution from the file
-                solution = json.load(f)
-
-            for v in M.getVars(): # Set the initial guess for the variables
-                if v.VarName in solution:
-                    v.start = solution[v.VarName]
-        except:
-            pass"""
-
         M.optimize()
 
-        """M.setParam('DualReductions', 0)
-        M.computeIIS()
-        M.write('iis.ilp')
-        """
 
         solution = get_and_save_solution(M, save_res_dir=save_res_dir,
                                          case_name=data['config']['case_name'],

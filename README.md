@@ -80,7 +80,7 @@ scheduler = Scheduler(
 # Run optimization
 result = scheduler.optimize()
 
-# Export results
+# Export schedule_results
 result.save_report("output/schedule_report.pdf")
 ```
 

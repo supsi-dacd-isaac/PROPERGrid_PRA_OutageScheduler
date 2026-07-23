@@ -1,5 +1,4 @@
-from gurobipy import GRB, quicksum
-from pra_psa.utils.utils import *
+from gurobipy import quicksum
 
 
 def my_quick_sum_dic(var, N1, N2=None, N3=None):

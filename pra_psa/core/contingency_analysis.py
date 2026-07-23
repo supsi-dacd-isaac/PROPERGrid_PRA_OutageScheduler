@@ -68,7 +68,7 @@ def calculate_lodf_and_shift(network, pf_solver=pp.runpp):
 
 def analyze_contingency(network, contingency, reference_dispatch=None):
     """
-    Analyze a contingency scenario and return detailed results.
+    Analyze a contingency scenario and return detailed schedule_results.
     
     Args:
         network: pandapower network
@@ -76,7 +76,7 @@ def analyze_contingency(network, contingency, reference_dispatch=None):
         reference_dispatch: tuple of (p_mw, q_mvar) for reference dispatch
         
     Returns:
-        dict: Analysis results including:
+        dict: Analysis schedule_results including:
             - success: bool indicating if power flow converged
             - loading: line loading percentages
             - violations: list of constraint violations
@@ -199,7 +199,7 @@ def compute_sensitivity_matrix_and_base_flows(network,
     Returns:
     - sensitivity_matrix (np.ndarray): Sensitivity matrix mapping active power injection changes to line flow changes.
     - base_line_flows (np.ndarray): Base line flows under the reference operating point.
-    - network: Updated network with base OPF results.
+    - network: Updated network with base OPF schedule_results.
     """
     # Step 1: Run base case OPF to get reference injections and flows
     reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)

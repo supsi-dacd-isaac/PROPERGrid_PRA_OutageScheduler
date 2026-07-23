@@ -2,6 +2,16 @@
   "case_name": "IEEE118",
   "data_path": "data/powersystems",
   "panda_power_case_name": "case118",
-  "aggregation_time": "W"
+  "aggregation_time": "W",
+  "comp_types": ["line", "line", "line", "line", "line", "line", "line", "line"],
+  "comp_ids": [0, 1, 2, 3, 5, 8, 12, 23],
+  "cost_per_days":  [2000, 2000, 2000, 3000, 3000, 3000, 5000, 10000],
+  "expected_duration_days": [25, 7, 55, 7, 30, 30, 30, 20],
+  "priorities": [1, 2, 2, 3, 3, 3, 1, 1],
+  "load_scaling_factor": 0.8,
+  "VoLL": 1e4,
+  "n_samples": 500,
+  "tail_prob_constraint": 0.8,
+  "use_DC_PF": false,
+  "max_number_of_maintenance_tasks": 2
 }
-

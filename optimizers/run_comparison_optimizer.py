@@ -1,5 +1,7 @@
+from gurobi_SCOS import *
 from optimizers.gurobi_SCOS_cvar import *
-from utils.data_preporcess import aggregate_hourly_demand, aggregate_step_costs_and_durations
+from utils.data_preporcess import *
+import matplotlib.pyplot as plt
 
 def plot_comparison_CVAR_DET_SCOS(dic_res_cvar, dic_res_det, DATA):
 
@@ -79,7 +81,7 @@ if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """
 
     # Load system data and historical nodal demand data
-    network, hourly_demand, config = data_loader('../config/conf_IEEE24.json')
+    network, hourly_demand, config = data_loader('../config/conf_IEEE24_scheduler.json')
     aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.
 
     # Define PM activities (planned outages)

@@ -80,7 +80,7 @@ def runPRA(network, n_minus_k_set=None,
             reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
             # sensitivity_matrix, base_line_flows, network, reference_p_mw, reference_q_mvar \
             #     = compute_sensitivity_matrix_and_base_flows( network)
-            logger.info(f"{green_c} Solved OPF for base case and undamaged network {reset_c}")
+            logger.info(f" Solved OPF for base case and undamaged network")
             network = apply_reference_dispatch(network, reference_p_mw=reference_p_mw, reference_q_mvar=reference_q_mvar)  # Optimal reference dispatch
         except Exception as e:
             logger.error(f"Failed to apply reference dispatch: {e}")  # Skip to next time step
