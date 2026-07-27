@@ -351,7 +351,7 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         M.setParam('TimeLimit', 3600)  # Set a one-hour time limit
 
         # Check optimization status
-        save_res_dir = ("../data/schedule_results/deterministic_optimizer/optimal_solution" +
+        save_res_dir = ("../outputs/schedule_results/deterministic_optimizer/optimal_solution" +
                         data['config']['case_name'] + '_' + data['config']['aggregation_time'] + ".json")
 
         M.update()

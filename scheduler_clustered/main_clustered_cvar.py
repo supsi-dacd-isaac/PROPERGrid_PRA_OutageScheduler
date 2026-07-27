@@ -35,9 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    raw_data = prepare_data(
-        conf_path="./config/conf_IEEE24_scheduler_v2.json"
-    )
+    raw_data = prepare_data(conf_path="./config/conf_IEEE118.json")
     data = augment_for_decomposition(
         raw_data,
         include_all_line_contingencies=True,

@@ -1,6 +1,5 @@
 """Run the deterministic outage-cluster scheduler from the PROPER root."""
 from __future__ import annotations
-
 import logging
 import sys
 from pathlib import Path
@@ -10,8 +9,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     project_root = Path(__file__).resolve().parents[1]
     project_root_str = str(project_root)
-    # Put the PROPER root before the script directory.  This prevents local
-    # modules inside ``scheduler_clustered`` from shadowing top-level packages
+    # Put the PROPER root before the script dir, prevents modules inside ``scheduler_clustered`` from shadowing
     # such as ``PROPER/visualization`` during direct script execution.
     try:
         sys.path.remove(project_root_str)
@@ -20,26 +18,16 @@ if __package__ in {None, ""}:
     sys.path.insert(0, project_root_str)
 
 from scheduler.dataprocess import prepare_data
-from scheduler_clustered.clustered_engine import (
-    ClusteredDeterministicConfig,
-    ClusteredDeterministicScheduler,
-)
-from scheduler_clustered.data_adapter import (
-    augment_for_decomposition,
-    power_data_diagnostics,
-)
+from scheduler_clustered.clustered_engine import (ClusteredDeterministicConfig, ClusteredDeterministicScheduler)
+from scheduler_clustered.data_adapter import (augment_for_decomposition, power_data_diagnostics)
 
-logging.basicConfig(
-    format="%(asctime)s::%(levelname)s::%(name)s::%(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(format="%(asctime)s::%(levelname)s::%(name)s::%(message)s",
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    raw_data = prepare_data(
-        conf_path="./config/conf_IEEE24_scheduler_v2.json"
-    )
+    raw_data = prepare_data(conf_path="./config/conf_IEEE118.json")
     data = augment_for_decomposition(
         raw_data,
         include_all_line_contingencies=True,

@@ -113,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.output_dir is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = project_root / "clustered_comparison_runs" / f"run_{stamp}"
+        run_dir = project_root / "outputs/clustered_comparison_runs" / f"run_{stamp}"
     else:
         run_dir = args.output_dir if args.output_dir.is_absolute() else project_root / args.output_dir
     run_dir = run_dir.resolve()

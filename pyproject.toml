@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proper-grid-pra-psa"
+version = "0.1.0"
+description = "PRA/PSA contingency-analysis and outage scheduler utilities for the PROPER-Grids project"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "openpyxl",
+    "pandapower",
+    "tqdm",
+    "joblib",
+    "networkx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["pra_psa*"]
