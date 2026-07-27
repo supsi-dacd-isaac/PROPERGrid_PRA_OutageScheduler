@@ -268,7 +268,7 @@ def CVAR_SCOS_gurobi(data,
         M.optimize()
 
         # Check optimization status
-        save_res_dir = ("../data/schedule_results/cvar_optimizer/optimal_solution" +
+        save_res_dir = ("../outputs/schedule_results/monolitic_scheduler/optim_sol_CVAR_" +
                         data['config']['case_name'] + '_' + data['config']['aggregation_time'] + ".json")
 
         solution = get_and_save_solution(M, save_res_dir=save_res_dir,

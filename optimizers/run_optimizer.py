@@ -379,7 +379,7 @@ def get_and_save_solution(M, save_res_dir=None, case_name=None, aggregation_time
         logger.error(f"{red_c} Optimization ended with status: {M.status}{reset_c}")
 
     if save_res_dir is None:
-        save_res_dir = "../outputs/schedule_results/deterministic_optimal_solution" + case_name + '_' + aggregation_time + ".json"
+        save_res_dir = "../outputs/schedule_results/monolitic_optim_" + case_name + '_' + aggregation_time + ".json"
 
     # Check optimization status
     solution = None

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    raw_data = prepare_data(conf_path="./config/conf_IEEE118.json")
+    raw_data = prepare_data(conf_path="./config/conf_IEEE118_v2.json")
     data = augment_for_decomposition(
         raw_data,
         include_all_line_contingencies=True,

@@ -27,14 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    raw_data = prepare_data(conf_path="./config/conf_IEEE118.json")
-    data = augment_for_decomposition(
-        raw_data,
-        include_all_line_contingencies=True,
-        include_generator_contingencies=False,
-        prefer_ppc_branch_limits=True,
-    )
-
+    raw_data = prepare_data(conf_path="./config/conf_IEEE118_v2.json")
+    data = augment_for_decomposition(raw_data,
+                                     include_all_line_contingencies=True,
+                                     include_generator_contingencies=False,
+                                     prefer_ppc_branch_limits=True, )
     # Master settings.
     data["master_output_flag"] = 0
     data["allow_outage_deferral"] = False
@@ -85,10 +82,7 @@ def main() -> None:
     logger.info("Best schedule: %s", result.best_schedule)
     logger.info("Deferred outages: %s", result.deferred_outages)
     logger.info("Best score: %s", result.best_score)
-    logger.info(
-        "Deterministic security cost: %s",
-        result.deterministic_security_cost,
-    )
+    logger.info("Deterministic security cost: %s",result.deterministic_security_cost)
 
 
 if __name__ == "__main__":
