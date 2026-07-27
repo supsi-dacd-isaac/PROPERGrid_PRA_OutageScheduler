@@ -86,6 +86,14 @@ def load_matlab_data(conf: dict, file_name: str = 'hourlyDemandBus.mat', feature
         return None
 
 
+from scipy import sparse
+def as_dense_array(matrix) -> np.ndarray:
+    """Convert a SciPy sparse matrix/array or dense object to ndarray."""
+    if sparse.issparse(matrix):
+        return matrix.toarray()
+
+    return np.asarray(matrix)
+
 def load_network(conf: dict):
     """ Dynamically load the network using getattr from pandapower networks"""
     try:

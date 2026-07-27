@@ -1,0 +1,25 @@
+{
+  "clustered_deterministic": {
+    "max_iterations": 40,
+    "representative_state_mode": "network_screening",
+    "representative_candidate_times": 12,
+    "contingency_top_k": null,
+    "security_mode": "penalty",
+    "security_penalty_weight": 10.0,
+    "total_dns_component_weight": 0.1,
+    "maximum_incremental_dns_budget": 0.25,
+    "max_candidates": 15,
+    "patience": 6,
+    "full_contingency_validation": true
+  },
+  "optional_data_fields": {
+    "allow_outage_deferral": false,
+    "corrective_redispatch_fraction": 0.2,
+    "redispatch_cost": 10.0,
+    "cluster_max_dns_weight": 1000000.0,
+    "cluster_total_dns_weight": 1000.0,
+    "outage_start_windows": {
+      "line_1": ["step_0", "step_20"]
+    }
+  }
+}

@@ -81,7 +81,7 @@ if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """
 
     # Load system data and historical nodal demand data
-    network, hourly_demand, config = data_loader('../config/conf_IEEE24_scheduler.json')
+    network, hourly_demand, config = data_loader('./config/conf_IEEE24_scheduler.json')
     aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.
 
     # Define PM activities (planned outages)

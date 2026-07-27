@@ -1,0 +1,32 @@
+Clustered scheduler installation
+================================
+
+Copy the `scheduler_clustered` directory and the two root-level scripts into the
+PROPER root. The resulting structure should be:
+
+PROPER/
+  run_clustered_comparison.py
+  visualize_clustered_results.py
+  scheduler_clustered/
+  scheduler/
+  optimizers/
+  visualization/
+  config/
+
+Do not create `scheduler_clustered/visualization.py`; that filename shadows the
+legacy top-level `visualization` package when a script is run directly.
+
+Run deterministic:
+  python -m scheduler_clustered.main_clustered
+
+Run CVaR:
+  python -m scheduler_clustered.main_clustered_cvar
+
+Run both and compare:
+  python run_clustered_comparison.py
+
+Reuse existing result JSON files:
+  python run_clustered_comparison.py --reuse-results
+
+Visualize one result:
+  python -m scheduler_clustered.results_visualization clustered_cvar_results.json

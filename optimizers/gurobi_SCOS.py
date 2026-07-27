@@ -3,11 +3,9 @@ from visualization.visualize_schedule import visualize_results
 from utils.utils import *
 from optimizers.run_optimizer import get_and_save_solution
 
-
 logging.basicConfig(level=logging.WARN)
 logger = logging.getLogger()
 
-"""from optimizers.utils_and_constraints import get_and_save_solution"""
 
 def initialize_variables(M, names, T):
     """ define VARIABLES for the SCOS problem """
@@ -189,6 +187,7 @@ def define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d
 def prepare_guroby_SCOS_data(data, names):
     # Preprocess the data
     net = data['network']
+    _ppc_internal = net._ppc["internal"]
     max_tasks = data['max_number_of_maintenance_tasks']
     T = [f'step_{t}' for t in range(len(data['nodal_demand']))]
     p_max = {gn: (v + 100 if v > 0 else 200) for gn, v in zip(names['generators'], net.gen['max_p_mw'])}
@@ -199,8 +198,14 @@ def prepare_guroby_SCOS_data(data, names):
     # Precompute generator to node mapping
     gen_to_node = {b: names['generators'][idx] for idx, b in enumerate(g2bus)}
 
-    S = net._ppc["internal"]['Cft'].A.T  # S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
-    B_mat = np.real(net._ppc["internal"]['Bf'].A)
+    #S = net._ppc["internal"]['Cft'].A.T  # S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
+    #B_mat = np.real(_ppc_internal['Bf'].A)
+
+    # B_mat = np.real(_ppc_internal['Bf'].A)
+    S = as_dense_array(_ppc_internal["Cft"]).T
+    Bf = as_dense_array(_ppc_internal["Bf"])
+    B_mat = np.real(Bf)
+
     B_lines = np.max(B_mat, axis=1)
     if names['contingencies'] is None:  # Generator indices
         names['contingencies'] = [f'n1_{l}' for l in names['lines']] + [f'n1_{g}' for g in names['generators']]

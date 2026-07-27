@@ -1,0 +1,22 @@
+{
+  "clustered_cvar": {
+    "max_iterations": 40,
+    "max_candidates": 15,
+    "patience": 6,
+    "oracle_workers": 4,
+    "representative_state_mode": "network_screening",
+    "representative_candidate_times": 12,
+    "contingency_top_k": 10,
+    "scenario_count": 16,
+    "scenario_seed": 42,
+    "scenario_sampling_scheme": "stratified_tail",
+    "global_lognormal_sigma": 0.05,
+    "risk_mode": "cvar_objective",
+    "cvar_alpha": 0.95,
+    "cvar_penalty_weight": 10.0,
+    "expected_loss_penalty_weight": 0.0,
+    "risk_proxy_learning_rate": 0.4,
+    "full_contingency_validation": true,
+    "results_path": "clustered_cvar_results.json"
+  }
+}
