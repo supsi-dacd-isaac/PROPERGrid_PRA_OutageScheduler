@@ -103,8 +103,8 @@ The new visualizer reads either deterministic or CVaR JSON results without
 loading Gurobi or the original network data:
 
 ```bash
-python -m scheduler_clustered.results_visualization clustered_deterministic_results.json
-python -m scheduler_clustered.results_visualization clustered_cvar_results.json
+python -m scheduler_clustered.visualization clustered_deterministic_results.json
+python -m scheduler_clustered.visualization clustered_cvar_results.json
 ```
 
 Equivalent convenience command:
@@ -119,7 +119,7 @@ output directory.
 To compare schedules:
 
 ```bash
-python -m scheduler_clustered.results_visualization \
+python -m scheduler_clustered.visualization \
     clustered_deterministic_results.json \
     --compare clustered_cvar_results.json
 ```

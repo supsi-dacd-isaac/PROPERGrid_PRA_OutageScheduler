@@ -1,0 +1,435 @@
+"""Common-candidate-pool comparison of risk-neutral and CVaR scheduling.
+
+This module removes avoidable differences between the two formulations:
+
+* one scheduling master and one feasible candidate pool;
+* one demand-scenario sampler and one probability vector;
+* one SCOPF oracle, contingency policy, baseline and loss definition;
+* one utility-admissibility threshold;
+* selection by expected loss versus selection by CVaR.
+
+The candidate pool is enumerated in non-increasing common-master utility without
+risk-proxy updates.  Every retained schedule is evaluated once, and the same
+scenario-loss vector is reused by both selectors.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
+import json
+import logging
+import math
+
+from .clustered_cvar_engine import (
+    ClusterCVaREvaluation,
+    ClusteredCVaRConfig,
+    ClusteredCVaRScheduler,
+)
+from .common_risk_selection import (
+    PairedLossSummary,
+    paired_loss_summary,
+    select_common_pool_candidates,
+)
+from .master_problem import (
+    MasterSolution,
+    MasterState,
+    SchedulingMaster,
+    no_good_from_solution,
+)
+from .risk_metrics import RiskSummary
+from .serialization import json_safe
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CommonRiskComparisonConfig:
+    """Settings that are specific to the controlled comparison."""
+
+    candidate_pool_size: int = 50
+    relative_utility_tolerance: float = 0.01
+    absolute_utility_tolerance: float = 0.0
+    tie_tolerance: float = 1e-9
+    stop_when_below_utility_floor: bool = False
+    full_contingency_validation: bool = True
+    results_path: str = "common_risk_comparison_results.json"
+    iis_path: str = "common_risk_master_infeasibility.ilp"
+
+
+@dataclass
+class CommonPoolCandidateRecord:
+    """One schedule evaluated on the common scenario and contingency settings."""
+
+    pool_index: int
+    master_objective: float
+    selection_utility: float
+    maintenance_utility: float
+    start_times: dict[str, str]
+    deferred_outages: tuple[str, ...]
+    active_outages: dict[str, tuple[str, ...]]
+    risk: RiskSummary
+    scenario_losses: dict[str, float]
+    clusters: list[ClusterCVaREvaluation]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pool_index": self.pool_index,
+            "master_objective": self.master_objective,
+            "selection_utility": self.selection_utility,
+            "maintenance_utility": self.maintenance_utility,
+            "start_times": self.start_times,
+            "deferred_outages": self.deferred_outages,
+            "active_outages": self.active_outages,
+            "risk": asdict(self.risk),
+            "scenario_losses": self.scenario_losses,
+            "clusters": [cluster.to_dict() for cluster in self.clusters],
+        }
+
+
+@dataclass
+class SelectedCommonPoolSchedule:
+    """Training and optional full-contingency results for one selected schedule."""
+
+    label: str
+    selection_metric: str
+    candidate: CommonPoolCandidateRecord
+    validation_risk: RiskSummary
+    validation_losses: dict[str, float]
+    validation_clusters: list[ClusterCVaREvaluation]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "selection_metric": self.selection_metric,
+            "pool_index": self.candidate.pool_index,
+            "best_schedule": self.candidate.start_times,
+            "deferred_outages": self.candidate.deferred_outages,
+            "best_active_outages": self.candidate.active_outages,
+            "master_objective": self.candidate.master_objective,
+            "selection_utility": self.candidate.selection_utility,
+            "maintenance_utility": self.candidate.maintenance_utility,
+            "training_risk": asdict(self.candidate.risk),
+            "training_scenario_losses": self.candidate.scenario_losses,
+            "validation_risk": asdict(self.validation_risk),
+            "validation_scenario_losses": self.validation_losses,
+            "validation_clusters": [
+                cluster.to_dict() for cluster in self.validation_clusters
+            ],
+        }
+
+
+@dataclass
+class CommonRiskComparisonResult:
+    risk_neutral: SelectedCommonPoolSchedule
+    cvar: SelectedCommonPoolSchedule
+    candidate_pool: list[CommonPoolCandidateRecord]
+    eligible_candidate_indices: tuple[int, ...]
+    utility_floor: float
+    scenario_probabilities: dict[str, float]
+    paired_validation: PairedLossSummary
+    termination_reason: str
+    configuration: CommonRiskComparisonConfig
+    risk_configuration: ClusteredCVaRConfig
+
+    @property
+    def same_schedule(self) -> bool:
+        return (
+            self.risk_neutral.candidate.start_times
+            == self.cvar.candidate.start_times
+            and self.risk_neutral.candidate.deferred_outages
+            == self.cvar.candidate.deferred_outages
+        )
+
+    @property
+    def validation_cvar_difference(self) -> float:
+        return float(
+            self.cvar.validation_risk.cvar
+            - self.risk_neutral.validation_risk.cvar
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        difference = self.validation_cvar_difference
+        if difference < -self.configuration.tie_tolerance:
+            tail_winner = "cvar"
+        elif difference > self.configuration.tie_tolerance:
+            tail_winner = "risk_neutral"
+        else:
+            tail_winner = "tie"
+        return {
+            "comparison_definition": (
+                "Both schedules are selected from one utility-admissible candidate "
+                "pool evaluated with identical demand scenarios, probabilities, "
+                "SCOPF, contingencies, no-outage baseline and loss definition. "
+                "The risk-neutral selector minimizes expected loss; the CVaR "
+                "selector minimizes CVaR."
+            ),
+            "deterministic_label_note": (
+                "The controlled comparator is risk-neutral rather than a "
+                "single-state deterministic approximation. This is intentional: "
+                "the only selection difference is expectation versus CVaR."
+            ),
+            "loss_definition": (
+                "Schedule scenario loss = sum over outage clusters of "
+                "(cluster duration / horizon) times positive incremental "
+                "worst-contingency DNS relative to the no-maintenance baseline."
+            ),
+            "validation_note": (
+                "The selected schedules are re-evaluated with the complete contingency "
+                "set when screening is used. Demand scenarios remain the common "
+                "in-sample scenario bank; independent out-of-sample validation is a "
+                "separate experiment."
+            ),
+            "termination_reason": self.termination_reason,
+            "candidate_pool_size": len(self.candidate_pool),
+            "eligible_candidate_count": len(self.eligible_candidate_indices),
+            "eligible_candidate_indices": self.eligible_candidate_indices,
+            "utility_floor": self.utility_floor,
+            "same_schedule": self.same_schedule,
+            "tail_risk_winner": tail_winner,
+            "validation_differences_cvar_minus_risk_neutral": {
+                "expected_loss_mw": float(
+                    self.cvar.validation_risk.expected_loss
+                    - self.risk_neutral.validation_risk.expected_loss
+                ),
+                "var_mw": float(
+                    self.cvar.validation_risk.var
+                    - self.risk_neutral.validation_risk.var
+                ),
+                "cvar_mw": difference,
+            },
+            "paired_validation": asdict(self.paired_validation),
+            "scenario_probabilities": self.scenario_probabilities,
+            "risk_neutral": self.risk_neutral.to_dict(),
+            "cvar": self.cvar.to_dict(),
+            "candidate_pool": [candidate.to_dict() for candidate in self.candidate_pool],
+            "comparison_config": asdict(self.configuration),
+            "risk_config": asdict(self.risk_configuration),
+        }
+
+
+class CommonRiskComparisonScheduler(ClusteredCVaRScheduler):
+    """Enumerate one pool and select expected-loss and CVaR schedules from it."""
+
+    def __init__(
+        self,
+        data: Mapping,
+        risk_config: ClusteredCVaRConfig | None = None,
+        comparison_config: CommonRiskComparisonConfig | None = None,
+    ):
+        super().__init__(data, risk_config or ClusteredCVaRConfig())
+        self.comparison_config = comparison_config or CommonRiskComparisonConfig()
+        if self.comparison_config.candidate_pool_size <= 0:
+            raise ValueError("candidate_pool_size must be positive.")
+        if self.comparison_config.relative_utility_tolerance < 0.0:
+            raise ValueError("relative_utility_tolerance must be non-negative.")
+        if self.comparison_config.absolute_utility_tolerance < 0.0:
+            raise ValueError("absolute_utility_tolerance must be non-negative.")
+        self.pool_state = MasterState()
+        self.pool_candidates: list[CommonPoolCandidateRecord] = []
+        self._pool_solutions: dict[int, MasterSolution] = {}
+
+    def _common_master_solution(self) -> MasterSolution:
+        """Solve the common master without formulation-specific risk coefficients."""
+        master = SchedulingMaster(self.data, self.pool_state)
+        return master.solve(
+            mip_gap=self.config.master_mip_gap,
+            time_limit=self.config.master_time_limit,
+            threads=self.config.master_threads,
+            iis_path=self.comparison_config.iis_path,
+        )
+
+    @staticmethod
+    def _selection_utility(solution: MasterSolution) -> float:
+        """Utility used for the admissibility floor and common-pool ordering."""
+        if solution.objective is None or not math.isfinite(float(solution.objective)):
+            raise ValueError("A finite common-master objective is required.")
+        # With an empty risk-coefficient state this is the common maintenance
+        # objective, including any configured deferral penalty.
+        return float(solution.objective)
+
+    def _enumerate_pool(self) -> tuple[str, float]:
+        termination = "candidate_pool_limit"
+        first_utility: float | None = None
+        utility_floor = -math.inf
+        seen: set[tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = set()
+
+        for pool_index in range(1, self.comparison_config.candidate_pool_size + 1):
+            solution = self._common_master_solution()
+            if solution.objective is None:
+                termination = "common_master_exhausted"
+                break
+            if solution.decision_signature in seen:
+                termination = "duplicate_common_master_solution"
+                break
+            seen.add(solution.decision_signature)
+
+            selection_utility = self._selection_utility(solution)
+            if first_utility is None:
+                first_utility = selection_utility
+                relative_drop = (
+                    self.comparison_config.relative_utility_tolerance
+                    * max(abs(first_utility), 1.0)
+                )
+                allowed_drop = max(
+                    self.comparison_config.absolute_utility_tolerance,
+                    relative_drop,
+                )
+                utility_floor = first_utility - allowed_drop
+
+            if (
+                self.comparison_config.stop_when_below_utility_floor
+                and selection_utility + self.comparison_config.tie_tolerance
+                < utility_floor
+            ):
+                termination = "utility_floor_reached"
+                break
+
+            evaluations, losses, risk = self._evaluate_solution(
+                solution,
+                force_full_contingencies=False,
+            )
+            candidate = CommonPoolCandidateRecord(
+                pool_index=pool_index,
+                master_objective=float(solution.objective),
+                selection_utility=selection_utility,
+                maintenance_utility=float(solution.maintenance_utility),
+                start_times=dict(solution.start_times),
+                deferred_outages=tuple(solution.deferred_outages),
+                active_outages=dict(solution.active_outages),
+                risk=risk,
+                scenario_losses=dict(losses),
+                clusters=list(evaluations),
+            )
+            self.pool_candidates.append(candidate)
+            self._pool_solutions[pool_index] = solution
+            logger.info(
+                "Common candidate %d: utility=%.8g, E[L]=%.8g MW, "
+                "VaR=%.8g MW, CVaR=%.8g MW",
+                pool_index,
+                selection_utility,
+                risk.expected_loss,
+                risk.var,
+                risk.cvar,
+            )
+
+            self.pool_state.no_goods.append(
+                no_good_from_solution(solution, label="common_candidate_pool")
+            )
+
+        if not self.pool_candidates:
+            raise RuntimeError("The common candidate pool is empty.")
+        return termination, float(utility_floor)
+
+    def _validated_selection(
+        self,
+        candidate: CommonPoolCandidateRecord,
+        *,
+        label: str,
+        metric: str,
+    ) -> SelectedCommonPoolSchedule:
+        solution = self._pool_solutions[candidate.pool_index]
+        requires_full_run = (
+            self.comparison_config.full_contingency_validation
+            and self.config.contingency_top_k is not None
+        )
+        if requires_full_run:
+            clusters, losses, risk = self._evaluate_solution(
+                solution,
+                force_full_contingencies=True,
+            )
+        else:
+            clusters = candidate.clusters
+            losses = candidate.scenario_losses
+            risk = candidate.risk
+        return SelectedCommonPoolSchedule(
+            label=label,
+            selection_metric=metric,
+            candidate=candidate,
+            validation_risk=risk,
+            validation_losses=dict(losses),
+            validation_clusters=list(clusters),
+        )
+
+    def _save_common_result(self, result: CommonRiskComparisonResult) -> None:
+        path = Path(self.comparison_config.results_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(json_safe(result.to_dict()), indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+
+    def solve_common_pool(self) -> CommonRiskComparisonResult:
+        """Run the controlled risk-neutral-versus-CVaR comparison."""
+        termination, enumerated_floor = self._enumerate_pool()
+        risk_neutral_candidate, cvar_candidate, selected_floor, eligible = (
+            select_common_pool_candidates(
+                self.pool_candidates,
+                relative_utility_tolerance=(
+                    self.comparison_config.relative_utility_tolerance
+                ),
+                absolute_utility_tolerance=(
+                    self.comparison_config.absolute_utility_tolerance
+                ),
+                numerical_tolerance=self.comparison_config.tie_tolerance,
+            )
+        )
+        # Both calculations should agree; use the selector's value in the output.
+        if abs(enumerated_floor - selected_floor) > 10 * max(
+            self.comparison_config.tie_tolerance, 1e-12
+        ):
+            logger.warning(
+                "Enumeration and selection utility floors differ: %.12g versus %.12g",
+                enumerated_floor,
+                selected_floor,
+            )
+
+        risk_neutral = self._validated_selection(
+            risk_neutral_candidate,
+            label="risk_neutral",
+            metric="minimum_expected_loss",
+        )
+        cvar = self._validated_selection(
+            cvar_candidate,
+            label="cvar",
+            metric=f"minimum_cvar_{self.config.cvar_alpha:.6g}",
+        )
+        paired = paired_loss_summary(
+            risk_neutral.validation_losses,
+            cvar.validation_losses,
+            self.probabilities,
+            tie_tolerance=self.comparison_config.tie_tolerance,
+        )
+        result = CommonRiskComparisonResult(
+            risk_neutral=risk_neutral,
+            cvar=cvar,
+            candidate_pool=list(self.pool_candidates),
+            eligible_candidate_indices=tuple(
+                candidate.pool_index for candidate in eligible
+            ),
+            utility_floor=float(selected_floor),
+            scenario_probabilities=dict(self.probabilities),
+            paired_validation=paired,
+            termination_reason=termination,
+            configuration=self.comparison_config,
+            risk_configuration=self.config,
+        )
+        self._save_common_result(result)
+
+        logger.info(
+            "Selected risk-neutral candidate %d: E[L]=%.8g, CVaR=%.8g",
+            risk_neutral.candidate.pool_index,
+            risk_neutral.validation_risk.expected_loss,
+            risk_neutral.validation_risk.cvar,
+        )
+        logger.info(
+            "Selected CVaR candidate %d: E[L]=%.8g, CVaR=%.8g",
+            cvar.candidate.pool_index,
+            cvar.validation_risk.expected_loss,
+            cvar.validation_risk.cvar,
+        )
+        logger.info(
+            "Validation CVaR difference (CVaR minus risk-neutral) = %.8g MW",
+            result.validation_cvar_difference,
+        )
+        return result

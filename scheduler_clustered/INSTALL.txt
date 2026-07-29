@@ -1,32 +1,12 @@
-Clustered scheduler installation
-================================
+Copy scheduler_clustered/ and run_clustered_comparison.py into the PROPER root.
 
-Copy the `scheduler_clustered` directory and the two root-level scripts into the
-PROPER root. The resulting structure should be:
+Run both optimisations and the common-sample paired validation:
+    python run_clustered_comparison.py
 
-PROPER/
-  run_clustered_comparison.py
-  visualize_clustered_results.py
-  scheduler_clustered/
-  scheduler/
-  optimizers/
-  visualization/
-  config/
+Use existing root-level scheduler results and rerun only validation/plots:
+    python run_clustered_comparison.py --reuse-results
 
-Do not create `scheduler_clustered/visualization.py`; that filename shadows the
-legacy top-level `visualization` package when a script is run directly.
+Default outputs:
+    outputs/clustered_comparison_runs/run_<timestamp>/
 
-Run deterministic:
-  python -m scheduler_clustered.main_clustered
-
-Run CVaR:
-  python -m scheduler_clustered.main_clustered_cvar
-
-Run both and compare:
-  python run_clustered_comparison.py
-
-Reuse existing result JSON files:
-  python run_clustered_comparison.py --reuse-results
-
-Visualize one result:
-  python -m scheduler_clustered.results_visualization clustered_cvar_results.json
+See README_PAIRED_COMPARISON.md for validation definitions and options.

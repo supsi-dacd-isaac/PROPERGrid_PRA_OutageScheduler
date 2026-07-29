@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,7 +36,12 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    raw_data = prepare_data(conf_path="./config/conf_IEEE118_v2.json")
+    config_path = os.getenv(
+        "PROPER_SCHEDULER_CONFIG",
+        "./config/conf_IEEE24_scheduler_v2.json",
+    )
+    logger.info("Using scheduler configuration: %s", config_path)
+    raw_data = prepare_data(conf_path=config_path)
     data = augment_for_decomposition(
         raw_data,
         include_all_line_contingencies=True,
@@ -60,8 +66,8 @@ def main() -> None:
         logger.warning("Data diagnostic: %s", warning)
 
     config = ClusteredCVaRConfig(
-        max_iterations=40,
-        master_time_limit=120.0,
+        max_iterations=80,
+        master_time_limit=240.0,
         master_mip_gap=0.01,
         master_threads=8,
         oracle_workers=4,
@@ -74,16 +80,16 @@ def main() -> None:
         # Tail-stratified empirical resampling preserves complete nodal demand
         # vectors.  Replace/calibrate sigma and scenario generation before a
         # research case study; sigma=0 uses only historical cluster states.
-        scenario_count=16,
+        scenario_count=100,
         scenario_seed=42,
         scenario_sampling_scheme="stratified_tail",
         global_lognormal_sigma=0.05,
         risk_mode="cvar_objective",
-        cvar_alpha=0.95,
+        cvar_alpha=0.9,
         cvar_penalty_weight=10.0,
         expected_loss_penalty_weight=0.0,
         risk_proxy_learning_rate=0.40,
-        max_candidates=15,
+        max_candidates=50,
         patience=6,
         full_contingency_validation=True,
         results_path="clustered_cvar_results.json",
