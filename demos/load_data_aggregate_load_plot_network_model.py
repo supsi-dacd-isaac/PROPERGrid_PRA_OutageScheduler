@@ -1,15 +1,15 @@
-from utils import data_loader
-from utils import aggregate_hourly_demand
+from utils.utils import data_loader
+from utils.data_preporcess import aggregate_hourly_demand
 
 import matplotlib.pyplot as plt
 import pandapower.plotting as plot_net
 
 if __name__ == '__main__':
     # Example: load demand data, network model, and configuration files
-    conf_path = '../config/conf_IEEE118.json'
+    conf_path = './config/wp3_optim/IEEE118.json'
     net_data118, df_loads118, conf118 = data_loader(conf_path)
 
-    conf_path = '../config/conf_IEEE24_scheduler.json'
+    conf_path = './config/wp3_optim/IEEE24_scheduler.json'
     net_data_24, df_loads_24, conf24 = data_loader(conf_path)
 
     df_loads_daily = aggregate_hourly_demand(df_loads_24)
@@ -22,7 +22,6 @@ if __name__ == '__main__':
     ax[1].set_title("IEEE 24-bus Network")
     plt.tight_layout()
     plt.show()
-
 
     # Plot demand data for IEEE 118-bus and IEEE 24-bus
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))

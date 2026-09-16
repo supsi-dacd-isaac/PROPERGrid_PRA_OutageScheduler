@@ -50,10 +50,11 @@ from matplotlib.colors import Normalize
 # Default Windows paths for the PROPER repository layout.
 # Change only these two constants if your local folder is different.
 # -----------------------------------------------------------------------------
-DEFAULT_SYSTEM_DIR = Path(r"/data/powersystems/Swiss2025")
-DEFAULT_CASE_PATH = DEFAULT_SYSTEM_DIR / "case_swissgrid2025.py"
-DEFAULT_CSV_DIR = DEFAULT_SYSTEM_DIR / "network_csvs"
-DEFAULT_OUTPUT_PATH = DEFAULT_SYSTEM_DIR / "swissgrid2025_network_map.png"
+DEFAULT_SYSTEM_DATA_DIR = Path(r"C:/Users/roberto.rocchetta/Documents/GitHub/PROPER/data/powersystems/Swiss2025")
+DEFAULT_SYSTEM_OUT_DIR  = Path(r"C:/Users/roberto.rocchetta/Documents/GitHub/PROPER/outputs/visuals")
+DEFAULT_CASE_PATH = DEFAULT_SYSTEM_DATA_DIR / "case_swissgrid2025.py"
+DEFAULT_CSV_DIR = DEFAULT_SYSTEM_DATA_DIR / "network_csvs"
+DEFAULT_OUTPUT_PATH = DEFAULT_SYSTEM_OUT_DIR / "swissgrid2025_network_map.png"
 
 
 # -----------------------------------------------------------------------------

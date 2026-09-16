@@ -1,6 +1,6 @@
 
 from optimizers.gurobi_SCOS import *
-from scheduler.utils_pre_process import aggregate_hourly_demand, aggregate_step_costs_and_durations
+from optimizers.utils_pre_process import aggregate_hourly_demand, aggregate_step_costs_and_durations
 
 # ANSI escape code for colored text
 blue_c, green_c, purple_c, cyan_c, red_c, gray_c = "\033[94m", "\033[92m", "\033[95m", "\033[96m", "\033[91m", " "
@@ -156,7 +156,7 @@ def plot_ecdf_show(val, xlb: str = 'x', ylb: str = 'ecdf', **kwargs):
 def prepare_data(conf_path = None):
     # Load system data and historical nodal demand data
     if conf_path is None:
-        conf_path = '../config/conf_IEEE24_scheduler.json'
+        conf_path = '../config/IEEE24_scheduler.json'
 
     network, hourly_demand, config = data_loader(conf_path)
     aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.

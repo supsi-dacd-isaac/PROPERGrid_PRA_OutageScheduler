@@ -7,15 +7,15 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.gurobi]
 pytest.importorskip("gurobipy")
 
-from scheduler_clustered.clustered_cvar_engine import ClusteredCVaRConfig  # noqa: E402
-from scheduler_clustered.common_risk_comparison import (  # noqa: E402
+from scheduler_clustered_v0.clustered_cvar_engine import ClusteredCVaRConfig  # noqa: E402
+from scheduler_clustered_v0.common_risk_comparison import (  # noqa: E402
     CommonPoolCandidateRecord,
     CommonRiskComparisonConfig,
     CommonRiskComparisonResult,
     SelectedCommonPoolSchedule,
 )
-from scheduler_clustered.common_risk_selection import PairedLossSummary  # noqa: E402
-from scheduler_clustered.risk_metrics import RiskSummary  # noqa: E402
+from scheduler_clustered_v0.common_risk_selection import PairedLossSummary  # noqa: E402
+from scheduler_clustered_v0.risk_metrics import RiskSummary  # noqa: E402
 
 
 def make_risk(expected: float, cvar: float) -> RiskSummary:

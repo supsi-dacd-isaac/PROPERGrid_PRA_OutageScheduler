@@ -21,6 +21,8 @@ class ClusterStateResult:
     contingency: str | None
     load_shedding: float
     spillage: float
+    load_shedding_by_bus: dict[str, float]
+    spillage_by_bus: dict[str, float]
     generation: dict[str, float]
     flows: dict[str, float]
     injections: np.ndarray
@@ -553,6 +555,14 @@ class ClusterSCOPFOracle:
                 contingency=contingency,
                 load_shedding=dns_value,
                 spillage=float(np.sum(spill_values)),
+                load_shedding_by_bus={
+                    bus: float(shed_values[bus_index])
+                    for bus_index, bus in enumerate(self.network.buses)
+                },
+                spillage_by_bus={
+                    bus: float(spill_values[bus_index])
+                    for bus_index, bus in enumerate(self.network.buses)
+                },
                 generation=generation,
                 flows=flows,
                 injections=injections,

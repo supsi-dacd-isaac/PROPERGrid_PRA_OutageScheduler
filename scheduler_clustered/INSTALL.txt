@@ -1,12 +1,19 @@
-Copy scheduler_clustered/ and run_clustered_comparison.py into the PROPER root.
+Copy the complete scheduler_clustered/ directory into the PROPER repository
+root, alongside scheduler/ (or the historical optimizers/ package).
 
-Run both optimisations and the common-sample paired validation:
-    python run_clustered_comparison.py
+Requirements:
+    gurobipy with a valid Gurobi licence
+    numpy, pandas, matplotlib
 
-Use existing root-level scheduler results and rerun only validation/plots:
-    python run_clustered_comparison.py --reuse-results
+Run the deterministic + CVaR optimisation and paired validation:
+    python -m scheduler_clustered.run_cluster_comparison \
+        --config config/conf_IEEE24_scheduler_v2.json
+
+Reuse existing optimisation JSON files and rerun validation/plots:
+    python -m scheduler_clustered.run_cluster_comparison --reuse-results
 
 Default outputs:
     outputs/clustered_comparison_runs/run_<timestamp>/
 
-See README_PAIRED_COMPARISON.md for validation definitions and options.
+See scheduler_clustered/README.md for the formulation, configuration fields,
+Gaussian load model, and interpretation of the CVaR risk-reduction guardrail.

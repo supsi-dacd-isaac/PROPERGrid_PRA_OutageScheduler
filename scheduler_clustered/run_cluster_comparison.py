@@ -81,10 +81,22 @@ def _parser() -> argparse.ArgumentParser:
         default=Path(
             os.getenv(
                 "PROPER_SCHEDULER_CONFIG",
-                "config/conf_IEEE24_scheduler_v2.json",
+                "config/IEEE24_scheduler_v2.json",
             )
         ),
         help="Network/scheduler input configuration used by both formulations.",
+    )
+    parser.add_argument(
+        "--deterministic-config",
+        type=Path,
+        default=None,
+        help="Optional clustered deterministic JSON configuration.",
+    )
+    parser.add_argument(
+        "--cvar-config",
+        type=Path,
+        default=None,
+        help="Optional clustered CVaR JSON configuration.",
     )
     parser.add_argument(
         "--output-dir",
@@ -115,14 +127,27 @@ def _parser() -> argparse.ArgumentParser:
         "--cvar-module",
         default="scheduler_clustered.main_clustered_cvar",
     )
-    parser.add_argument("--validation-samples", type=int, default=64)
+    parser.add_argument("--validation-samples", type=int, default=96)
+    parser.add_argument(
+        "--validation-scenario-model",
+        choices=("gaussian_critical_states", "empirical_cluster"),
+        default="gaussian_critical_states",
+    )
+    parser.add_argument("--validation-critical-states", type=int, default=3)
     parser.add_argument("--validation-seed", type=int, default=20260727)
     parser.add_argument(
         "--validation-sampling-scheme",
         choices=("random", "stratified_tail"),
         default="random",
     )
-    parser.add_argument("--validation-sigma", type=float, default=None)
+    parser.add_argument(
+        "--validation-sigma",
+        type=float,
+        default=None,
+        help="Legacy empirical global lognormal sigma.",
+    )
+    parser.add_argument("--validation-relative-sigma", type=float, default=None)
+    parser.add_argument("--validation-global-sigma", type=float, default=None)
     parser.add_argument("--validation-alpha", type=float, default=None)
     parser.add_argument("--validation-workers", type=int, default=1)
     parser.add_argument("--winner-tolerance-mw", type=float, default=1e-6)
@@ -164,6 +189,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     scheduler_environment = {
         "PROPER_SCHEDULER_CONFIG": str(config_path),
     }
+    if args.deterministic_config is not None:
+        deterministic_config = args.deterministic_config
+        if not deterministic_config.is_absolute():
+            deterministic_config = project_root / deterministic_config
+        scheduler_environment["PROPER_CLUSTERED_CONFIG"] = str(
+            deterministic_config.resolve()
+        )
+    if args.cvar_config is not None:
+        cvar_config = args.cvar_config
+        if not cvar_config.is_absolute():
+            cvar_config = project_root / cvar_config
+        scheduler_environment["PROPER_CLUSTERED_CVAR_CONFIG"] = str(
+            cvar_config.resolve()
+        )
 
     if not args.reuse_results:
         _run_command(
@@ -172,11 +211,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             log_path=run_dir / "logs" / "deterministic.log",
             environment=scheduler_environment,
         )
+        cvar_environment = dict(scheduler_environment)
+        cvar_environment["PROPER_DETERMINISTIC_RESULTS"] = str(
+            deterministic_source
+        )
         _run_command(
             [sys.executable, "-m", args.cvar_module],
             cwd=project_root,
             log_path=run_dir / "logs" / "cvar.log",
-            environment=scheduler_environment,
+            environment=cvar_environment,
         )
 
     deterministic_snapshot = _snapshot(
@@ -219,6 +262,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             str(args.validation_samples),
             "--scenario-seed",
             str(args.validation_seed),
+            "--scenario-model",
+            str(args.validation_scenario_model),
+            "--critical-state-count",
+            str(args.validation_critical_states),
             "--sampling-scheme",
             str(args.validation_sampling_scheme),
             "--oracle-workers",
@@ -229,6 +276,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.validation_sigma is not None:
             validation_command.extend(
                 ["--global-lognormal-sigma", str(args.validation_sigma)]
+            )
+        if args.validation_relative_sigma is not None:
+            validation_command.extend(
+                [
+                    "--gaussian-relative-sigma",
+                    str(args.validation_relative_sigma),
+                ]
+            )
+        if args.validation_global_sigma is not None:
+            validation_command.extend(
+                [
+                    "--gaussian-global-sigma",
+                    str(args.validation_global_sigma),
+                ]
             )
         if args.validation_alpha is not None:
             validation_command.extend(["--cvar-alpha", str(args.validation_alpha)])

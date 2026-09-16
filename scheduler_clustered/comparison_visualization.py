@@ -117,10 +117,10 @@ def _evaluation_frame(paired: Mapping[str, Any]) -> pd.DataFrame:
                 "source_time": det.get("source_time"),
                 "total_demand_mw": float(det.get("total_demand", math.nan)),
                 "global_multiplier": float(det.get("global_multiplier", math.nan)),
-                "deterministic_loss_mw": float(det.get("incremental_maximum_dns", 0.0)),
-                "cvar_loss_mw": float(cv.get("incremental_maximum_dns", 0.0)),
-                "cvar_minus_deterministic_mw": float(cv.get("incremental_maximum_dns", 0.0))
-                - float(det.get("incremental_maximum_dns", 0.0)),
+                "deterministic_loss_mw": float(det.get("loss", det.get("incremental_maximum_dns", 0.0))),
+                "cvar_loss_mw": float(cv.get("loss", cv.get("incremental_maximum_dns", 0.0))),
+                "cvar_minus_deterministic_mw": float(cv.get("loss", cv.get("incremental_maximum_dns", 0.0)))
+                - float(det.get("loss", det.get("incremental_maximum_dns", 0.0))),
                 "deterministic_active_outages": " + ".join(det.get("active_outages", [])),
                 "cvar_active_outages": " + ".join(cv.get("active_outages", [])),
                 "deterministic_worst_contingency": det.get("candidate_worst_contingency"),
@@ -203,7 +203,7 @@ def plot_paired_loss_ecdf(frame: pd.DataFrame, path: Path, *, show: bool = False
     ):
         x, y = _weighted_ecdf(frame[column].to_numpy(dtype=float), weights)
         ax.step(x, y, where="post", label=label)
-    ax.set_xlabel("Paired validation incremental maximum DNS [MW]")
+    ax.set_xlabel("Paired validation composite DNS loss [MW]")
     ax.set_ylabel("Weighted cumulative probability")
     ax.set_title("Common-sample loss-distribution comparison")
     ax.legend()
@@ -227,7 +227,7 @@ def plot_risk_metrics(paired: Mapping[str, Any], path: Path, *, show: bool = Fal
     ax.bar_label(cv_bars, fmt="%.3g", padding=3)
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
-    ax.set_ylabel("Incremental DNS [MW]")
+    ax.set_ylabel("Composite DNS loss [MW]")
     winner = comparison.get("tail_risk_winner", "undetermined")
     ax.set_title(f"Paired validation risk metrics; tail-risk winner: {winner}")
     ax.legend()
@@ -283,7 +283,7 @@ def plot_upper_tail(frame: pd.DataFrame, paired: Mapping[str, Any], path: Path, 
         ax.step(cdf[mask], x[mask], where="post", label=label)
     ax.axvline(alpha, linestyle="--", label=f"VaR level {alpha:.2f}")
     ax.set_xlabel("Weighted cumulative probability")
-    ax.set_ylabel("Incremental DNS [MW]")
+    ax.set_ylabel("Composite DNS loss [MW]")
     ax.set_title("Upper-tail quantile comparison")
     ax.legend()
     ax.grid(alpha=0.3)

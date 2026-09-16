@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from scheduler_clustered.common_risk_selection import (
+from scheduler_clustered_v0.common_risk_selection import (
     compute_utility_floor,
     paired_loss_summary,
     select_common_pool_candidates,
 )
-from scheduler_clustered.risk_metrics import RiskSummary
+from scheduler_clustered_v0.risk_metrics import RiskSummary
 
 
 @dataclass

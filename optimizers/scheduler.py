@@ -1,5 +1,5 @@
 from gurobipy import Model, GRB
-from optimizers.utils_and_constraints import *
+from scheduler_monolitic.utils_and_constraints import *
 from utils.data_preporcess import *
 from utils.data_preporcess import aggregate_hourly_demand as aggregate
 
@@ -431,7 +431,7 @@ class outage_scheduler:
 if __name__ == "__main__":
     """ Prepare data for the outage scheduling problem """
     # Load data
-    network, hourly_demand, config = data_loader('../config/conf_IEEE24_scheduler.json')
+    network, hourly_demand, config = data_loader('../config/IEEE24_scheduler.json')
     aggregation_step = config['aggregation_time']  # 'W', 'D', 'H
     cost_per_days = [1000, 2000, 1000, 1000, 2000, 1000, 2000, 5000, 10]
     expected_duration_days = [25, 14, 55, 14, 30, 30, 30, 60, 20]

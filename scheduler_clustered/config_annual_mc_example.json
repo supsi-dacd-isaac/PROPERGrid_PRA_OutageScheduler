@@ -1,0 +1,20 @@
+{
+  "annual_mc_evaluation": {
+    "mc_years": 20,
+    "seed": 20260731,
+    "alpha": 0.95,
+    "temporal_rho": 0.9,
+    "relative_sigma": 0.05,
+    "global_sigma": 0.025,
+    "correlation_shrinkage": 0.2,
+    "antithetic": true,
+    "truncate_multiplier_min": 0.6,
+    "truncate_multiplier_max": 1.5,
+    "time_step_hours": 3.0,
+    "oracle_workers": 1,
+    "total_dns_component_weight": 0.1,
+    "use_all_contingencies": true,
+    "checkpoint_every_years": 1,
+    "winner_tolerance_mwh": 1e-6
+  }
+}

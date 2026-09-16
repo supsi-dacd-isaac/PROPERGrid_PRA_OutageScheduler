@@ -17,3 +17,5 @@ xgboost>=1.5.0
 pulp
 pyomo
 joblib>=1.1.0
+meteodata-lab[polytope,regrid]
+

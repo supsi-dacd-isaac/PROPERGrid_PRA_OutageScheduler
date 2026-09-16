@@ -1,4 +1,11 @@
-"""Compact start-index outage-scheduling master problem."""
+"""Compact start-index outage-scheduling master problem.
+
+The formulation uses one binary start variable for each admissible outage start.
+This representation enforces a single uninterrupted outage block of exactly the
+requested duration without introducing period-by-period transition binaries.
+Optional deferral variables let the master select a feasible subset when all
+requested outages cannot be accommodated.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -43,16 +50,26 @@ class MasterSolution:
     active_outages: dict[str, tuple[str, ...]]
     maintenance_utility: float
     proxy_security_penalty: float
+    coverage_utility: float = 0.0
+    timing_utility: float = 0.0
+    scheduled_outage_count: int = 0
 
     @property
-    def decision_signature(self) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
-        return tuple(sorted(self.start_times.items())), tuple(sorted(self.deferred_outages))
+    def decision_signature(
+        self,
+    ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+        return (
+            tuple(sorted(self.start_times.items())),
+            tuple(sorted(self.deferred_outages)),
+        )
 
 
 def duration_steps(data: Mapping, outage: str) -> int:
     duration = int(round(float(data["durations"][outage])))
     if duration <= 0:
-        raise ValueError(f"Outage {outage!r} has non-positive duration {duration}.")
+        raise ValueError(
+            f"Outage {outage!r} has non-positive duration {duration}."
+        )
     return duration
 
 
@@ -72,7 +89,7 @@ def _resolve_window_indices(
         first = raw.get("start", 0)
         last = raw.get("end", latest_default)
         end_is_completion = bool(raw.get("end_is_completion", False))
-    elif isinstance(raw, Sequence) and len(raw) == 2:
+    elif isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)) and len(raw) == 2:
         first, last = raw
         end_is_completion = bool(data.get("window_end_is_completion", False))
     else:
@@ -95,8 +112,8 @@ def _resolve_window_indices(
     last_index = min(latest_default, last_index)
     if first_index > last_index:
         raise ValueError(
-            f"No feasible starts for {outage}: range=({first_index}, {last_index}), "
-            f"duration={duration}, horizon={horizon}."
+            f"No feasible starts for {outage}: range=({first_index}, "
+            f"{last_index}), duration={duration}, horizon={horizon}."
         )
     return first_index, last_index
 
@@ -130,12 +147,130 @@ def covering_starts(
     return cover
 
 
+def build_active_outages(
+    data: Mapping,
+    start_times: Mapping[str, str],
+) -> dict[str, tuple[str, ...]]:
+    """Expand start decisions into period-wise active outage sets."""
+    times = list(data["T"])
+    time_index = {time: index for index, time in enumerate(times)}
+    starts = feasible_starts(data)
+    for outage, start in start_times.items():
+        if outage not in starts:
+            raise KeyError(f"Unknown outage {outage!r}.")
+        if start not in starts[outage]:
+            raise ValueError(
+                f"Start {start!r} is not admissible for outage {outage!r}."
+            )
+
+    active: dict[str, tuple[str, ...]] = {}
+    for time in times:
+        current_index = time_index[time]
+        current: list[str] = []
+        for outage, start in start_times.items():
+            start_index = time_index[start]
+            if start_index <= current_index < start_index + duration_steps(data, outage):
+                current.append(outage)
+        active[time] = tuple(sorted(current))
+    return active
+
+
+def validate_outage_consistency(
+    data: Mapping,
+    start_times: Mapping[str, str],
+    active_outages: Mapping[str, Sequence[str]],
+) -> None:
+    """Verify exact duration, contiguity, and simultaneous-outage limits."""
+    times = list(data["T"])
+    expected = build_active_outages(data, start_times)
+    for time in times:
+        actual = tuple(sorted(set(active_outages.get(time, ()))))
+        if actual != expected[time]:
+            raise ValueError(
+                f"Inconsistent active-outage set at {time}: expected "
+                f"{expected[time]}, received {actual}."
+            )
+
+    max_tasks = data["max_tasks"]
+    for time in times:
+        capacity = (
+            int(max_tasks.get(time, 0))
+            if isinstance(max_tasks, Mapping)
+            else int(max_tasks)
+        )
+        if len(expected[time]) > capacity:
+            raise ValueError(
+                f"Simultaneous-outage limit exceeded at {time}: "
+                f"{len(expected[time])} > {capacity}."
+            )
+
+
+def _priority(data: Mapping, outage: str) -> float:
+    return float(data.get("priority", {}).get(outage, 1.0))
+
+
+def _utility_components(
+    data: Mapping,
+    start_times: Mapping[str, str],
+) -> tuple[float, float, float]:
+    times = list(data["T"])
+    index = {time: position for position, time in enumerate(times)}
+    horizon = max(1, len(times) - 1)
+    coverage = sum(_priority(data, outage) for outage in start_times)
+    timing = sum(
+        _priority(data, outage) * (1.0 - index[start] / horizon)
+        for outage, start in start_times.items()
+    )
+    maintenance = (
+        float(data.get("outage_coverage_reward", 1.0)) * coverage
+        + float(data.get("outage_priority_timing_reward", 0.1)) * timing
+    )
+    return float(coverage), float(timing), float(maintenance)
+
+
+def solution_from_start_times(
+    data: Mapping,
+    start_times: Mapping[str, str],
+    *,
+    deferred_outages: Sequence[str] = (),
+    status: int = GRB.OPTIMAL,
+) -> MasterSolution:
+    """Create a validated solution object from externally supplied starts."""
+    all_outages = set(data["names"]["outages"])
+    selected = {str(key): str(value) for key, value in start_times.items()}
+    deferred = tuple(sorted(str(value) for value in deferred_outages))
+    if set(selected) & set(deferred):
+        raise ValueError("An outage cannot be both scheduled and deferred.")
+    if set(selected) | set(deferred) != all_outages:
+        missing = all_outages - (set(selected) | set(deferred))
+        extra = (set(selected) | set(deferred)) - all_outages
+        raise ValueError(
+            f"External schedule must classify every outage; missing={sorted(missing)}, "
+            f"extra={sorted(extra)}."
+        )
+    active = build_active_outages(data, selected)
+    validate_outage_consistency(data, selected, active)
+    coverage, timing, maintenance = _utility_components(data, selected)
+    return MasterSolution(
+        status=status,
+        objective=maintenance,
+        start_times=selected,
+        deferred_outages=deferred,
+        active_outages=active,
+        maintenance_utility=maintenance,
+        proxy_security_penalty=0.0,
+        coverage_utility=coverage,
+        timing_utility=timing,
+        scheduled_outage_count=len(selected),
+    )
+
+
 def _expression_value(expression: LinExpr) -> float:
     return float(expression.getValue())
 
 
 class SchedulingMaster:
-    """Start-only outage scheduler with optional deferral and learned penalties."""
+    """Start-only outage scheduler with optional deferral and learned risk."""
 
     def __init__(self, data: Mapping, state: MasterState | None = None):
         self.data = data
@@ -149,24 +284,25 @@ class SchedulingMaster:
         self.y = None
         self.defer = None
         self.x_expr: dict[tuple[str, str], LinExpr] = {}
+        self.selected_expr: dict[str, LinExpr] = {}
         self._maintenance_expr: LinExpr | None = None
+        self._coverage_expr: LinExpr | None = None
+        self._timing_expr: LinExpr | None = None
         self._risk_expr: LinExpr | None = None
 
     def _add_optional_constraints(self, model: Model) -> None:
-        for pair_index, pair in enumerate(
-            self.data.get("mutually_exclusive_outages", [])
-        ):
-            if len(pair) != 2:
-                raise ValueError(
-                    f"Mutual-exclusion entries require two outages: {pair!r}"
-                )
-            first, second = pair
+        # Pairwise or group incompatibilities.  A list [a,b,c] means that at
+        # most one of the listed outages may be active in a period.
+        groups = list(self.data.get("mutually_exclusive_outages", []))
+        groups.extend(self.data.get("incompatible_outage_groups", []))
+        for group_index, group in enumerate(groups):
+            valid = [outage for outage in group if outage in self.outages]
+            if len(valid) < 2:
+                continue
             for time in self.times:
                 model.addConstr(
-                    self.x_expr[(time, first)]
-                    + self.x_expr[(time, second)]
-                    <= 1,
-                    name=f"MutualExclusion_{pair_index}_{time}",
+                    quicksum(self.x_expr[(time, outage)] for outage in valid) <= 1,
+                    name=f"Incompatibility_{group_index}_{time}",
                 )
 
         capacities = self.data.get("resource_capacities", {})
@@ -196,11 +332,7 @@ class SchedulingMaster:
             before, after = relation[0], relation[1]
             lag = int(relation[2]) if len(relation) >= 3 else 0
             finish_before = quicksum(
-                (
-                    time_index[start]
-                    + duration_steps(self.data, before)
-                    + lag
-                )
+                (time_index[start] + duration_steps(self.data, before) + lag)
                 * self.y[before, start]
                 for start in self.starts[before]
             )
@@ -210,9 +342,7 @@ class SchedulingMaster:
             )
             relaxation = 0.0
             if self.allow_deferral:
-                relaxation = big_m * (
-                    self.defer[before] + self.defer[after]
-                )
+                relaxation = big_m * (self.defer[before] + self.defer[after])
             model.addConstr(
                 finish_before <= start_after + relaxation,
                 name=f"Precedence_{relation_index}",
@@ -227,63 +357,57 @@ class SchedulingMaster:
             for outage in self.outages
             for start in self.starts[outage]
         ]
-        self.y = model.addVars(
-            feasible_keys,
-            vtype=GRB.BINARY,
-            name="outage_start",
-        )
+        self.y = model.addVars(feasible_keys, vtype=GRB.BINARY, name="outage_start")
         if self.allow_deferral:
             self.defer = model.addVars(
-                self.outages,
-                vtype=GRB.BINARY,
-                name="outage_deferred",
+                self.outages, vtype=GRB.BINARY, name="outage_deferred"
             )
 
         for outage in self.outages:
             schedule_sum = quicksum(
                 self.y[outage, start] for start in self.starts[outage]
             )
+            self.selected_expr[outage] = schedule_sum
             if self.allow_deferral:
                 model.addConstr(
                     schedule_sum + self.defer[outage] == 1,
                     name=f"ScheduleOrDefer_{outage}",
                 )
             else:
-                model.addConstr(
-                    schedule_sum == 1,
-                    name=f"OneStart_{outage}",
-                )
+                model.addConstr(schedule_sum == 1, name=f"OneStart_{outage}")
 
         for outage, start in self.state.forbidden_starts:
             if (outage, start) in self.y:
                 self.y[outage, start].UB = 0.0
 
+        max_tasks = self.data["max_tasks"]
         for time in self.times:
             for outage in self.outages:
                 self.x_expr[(time, outage)] = quicksum(
                     self.y[outage, start]
                     for start in self.cover[(time, outage)]
                 )
+            capacity = (
+                int(max_tasks.get(time, 0))
+                if isinstance(max_tasks, Mapping)
+                else int(max_tasks)
+            )
             model.addConstr(
                 quicksum(
                     self.x_expr[(time, outage)] for outage in self.outages
                 )
-                <= int(self.data["max_tasks"]),
+                <= capacity,
                 name=f"MaxTasks_{time}",
             )
 
         self._add_optional_constraints(model)
 
         for cut_index, cut in enumerate(self.state.conflicts):
-            valid = tuple(
-                outage for outage in cut.outages if outage in self.outages
-            )
+            valid = tuple(outage for outage in cut.outages if outage in self.outages)
             if not valid:
                 continue
             model.addConstr(
-                quicksum(
-                    self.x_expr[(cut.time, outage)] for outage in valid
-                )
+                quicksum(self.x_expr[(cut.time, outage)] for outage in valid)
                 <= len(valid) - 1,
                 name=f"Conflict_{cut.label}_{cut_index}",
             )
@@ -306,15 +430,24 @@ class SchedulingMaster:
                     name=f"NoGood_{cut.label}_{cut_index}",
                 )
 
-        priorities = self.data.get("priority", {})
         time_index = {time: index for index, time in enumerate(self.times)}
-        horizon = max(1, len(self.times))
-        self._maintenance_expr = quicksum(
-            float(priorities.get(outage, 1.0))
-            * (1.0 - time_index[start] / horizon)
+        timing_horizon = max(1, len(self.times) - 1)
+        self._coverage_expr = quicksum(
+            _priority(self.data, outage) * self.selected_expr[outage]
+            for outage in self.outages
+        )
+        self._timing_expr = quicksum(
+            _priority(self.data, outage)
+            * (1.0 - time_index[start] / timing_horizon)
             * self.y[outage, start]
             for outage in self.outages
             for start in self.starts[outage]
+        )
+        self._maintenance_expr = (
+            float(self.data.get("outage_coverage_reward", 1.0))
+            * self._coverage_expr
+            + float(self.data.get("outage_priority_timing_reward", 0.1))
+            * self._timing_expr
         )
         self._risk_expr = quicksum(
             float(self.state.risk_coefficients.get((outage, time), 0.0))
@@ -330,8 +463,8 @@ class SchedulingMaster:
                 float(
                     penalties.get(
                         outage,
-                        self.data.get("default_defer_penalty", 100.0)
-                        * float(priorities.get(outage, 1.0)),
+                        self.data.get("default_defer_penalty", 0.0)
+                        * _priority(self.data, outage),
                     )
                 )
                 * self.defer[outage]
@@ -361,9 +494,7 @@ class SchedulingMaster:
         model.Params.MIPGap = float(mip_gap)
         model.Params.TimeLimit = float(time_limit)
         model.Params.Presolve = 2
-        model.Params.Heuristics = float(
-            self.data.get("master_heuristics", 0.1)
-        )
+        model.Params.Heuristics = float(self.data.get("master_heuristics", 0.1))
         model.Params.Cuts = int(self.data.get("master_cuts", 1))
         if threads > 0:
             model.Params.Threads = int(threads)
@@ -402,24 +533,11 @@ class SchedulingMaster:
             if outage in deferred:
                 continue
             selected[outage] = max(
-                self.starts[outage],
-                key=lambda start: self.y[outage, start].X,
+                self.starts[outage], key=lambda start: self.y[outage, start].X
             )
 
-        time_index = {time: index for index, time in enumerate(self.times)}
-        active: dict[str, tuple[str, ...]] = {}
-        for time in self.times:
-            current: list[str] = []
-            current_index = time_index[time]
-            for outage, start in selected.items():
-                start_index = time_index[start]
-                if (
-                    start_index
-                    <= current_index
-                    < start_index + duration_steps(self.data, outage)
-                ):
-                    current.append(outage)
-            active[time] = tuple(sorted(current))
+        active = build_active_outages(self.data, selected)
+        validate_outage_consistency(self.data, selected, active)
 
         return MasterSolution(
             status=model.Status,
@@ -429,6 +547,9 @@ class SchedulingMaster:
             active_outages=active,
             maintenance_utility=_expression_value(self._maintenance_expr),
             proxy_security_penalty=_expression_value(self._risk_expr),
+            coverage_utility=_expression_value(self._coverage_expr),
+            timing_utility=_expression_value(self._timing_expr),
+            scheduled_outage_count=len(selected),
         )
 
 

@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scheduler_clustered.outage_clusters import OutageCluster
-from scheduler_clustered.scenario_sampling import (
+from scheduler_clustered_v0.outage_clusters import OutageCluster
+from scheduler_clustered_v0.scenario_sampling import (
     EmpiricalClusterScenarioSampler,
     demand_fingerprint,
 )

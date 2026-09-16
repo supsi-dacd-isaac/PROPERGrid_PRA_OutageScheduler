@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the next six hours of MeteoSwiss wind forecasts on grid lines.
+"""Plot the next x hours of MeteoSwiss wind forecasts on grid lines.
 
 This is a self-contained PROPER utility. It:
 
@@ -67,25 +67,18 @@ from matplotlib.patches import Patch
 STAC_BASE_URL = "https://data.geo.admin.ch/api/stac/v1"
 COLLECTION_ID = "ch.meteoschweiz.ogd-local-forecasting"
 COLLECTION_ROOT = f"https://data.geo.admin.ch/{COLLECTION_ID}"
-POINT_METADATA_URL = (
-    f"{COLLECTION_ROOT}/ogd-local-forecasting_meta_point.csv"
-)
-
+POINT_METADATA_URL = (f"{COLLECTION_ROOT}/ogd-local-forecasting_meta_point.csv")
 WMS_BASE_URL = "https://wms.geo.admin.ch/"
 BOUNDARY_LAYER = "ch.swisstopo.swissboundaries3d-land-flaeche.fill"
 SWITZERLAND_BBOX = (5.70, 45.70, 10.70, 47.90)
 LOCAL_TZ = ZoneInfo("Europe/Zurich")
 USER_AGENT = "PROPER-MeteoSwiss-wind-6h/1.0"
 
-BUS_ID = "bus_i"
-LINE_ID = "line_id"
-FROM_BUS = "fbus"
-TO_BUS = "tbus"
-
+BUS_ID, LINE_ID, FROM_BUS, TO_BUS= "bus_i", "line_id", "fbus", "tbus"
 DEFAULT_HOURS = 32
 DEFAULT_SAMPLES_PER_LINE = 5
 DEFAULT_MAX_POI_DISTANCE_KM = 10.0
-
+DEFAULT_FIELD="speed-q90"
 # MeteoSwiss local-forecast parameters. Wind speeds are supplied in km/h.
 FIELD_CONFIG = {
     "gust": {
@@ -855,7 +848,7 @@ def construct_segments(
     return np.asarray(coordinates), np.asarray(values)
 
 
-def plot_six_hour_profile(
+def plot_x_hour_profile(
     line_wind: pd.DataFrame,
     *,
     value_column: str,
@@ -873,33 +866,25 @@ def plot_six_hour_profile(
     ).sort_values()
     if len(times) != DEFAULT_HOURS:
         raise ValueError(
-            f"The six-hour figure requires 6 timestamps; found {len(times)}"
+            f"The X-hour figure requires X timestamps; found {len(times)}"
         )
 
     background = None
     if boundary_path is not None:
         background = plt.imread(boundary_path)
 
-    figure, axes = plt.subplots(
-        4,
-        int(DEFAULT_HOURS/4),
-        figsize=(17.0, 9.2),
-        dpi=150,
-        sharex=True,
-        sharey=True,
-    )
+    figure, axes = plt.subplots(4, int(DEFAULT_HOURS/4),
+                                figsize=(25.0, 12),  dpi=150,
+                                sharex=True,  sharey=True)
     axes = axes.ravel()
     lon_min, lat_min, lon_max, lat_max = SWITZERLAND_BBOX
 
     for axis, valid_time in zip(axes, times):
         axis.set_facecolor("#f7f8fa")
         if background is not None:
-            axis.imshow(
-                background,
-                extent=(lon_min, lon_max, lat_min, lat_max),
-                origin="upper",
-                zorder=0,
-            )
+            axis.imshow( background,
+                         extent=(lon_min, lon_max, lat_min, lat_max),
+                         origin="upper",  zorder=0, )
 
         hourly = line_wind.loc[
             line_wind["valid_time_utc"].eq(valid_time)
@@ -978,7 +963,7 @@ def plot_six_hour_profile(
         run_token, format="%Y%m%d%H%M", utc=True
     ).tz_convert(LOCAL_TZ)
     figure.suptitle(
-        "Six-hour wind profile on Swiss transmission lines\n"
+        "Wind profile on Swiss transmission lines\n"
         f"{field_label} [km/h] — forecast issued "
         f"{run_time:%Y-%m-%d %H:%M %Z}",
         fontsize=15,
@@ -1186,17 +1171,11 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         boundary_path = None
         print(f"    Boundary unavailable; plotting without it: {error}")
 
-    print("6/6 Plotting the six-hour line profile")
-    figure_paths = plot_six_hour_profile(
-        line_wind,
-        value_column=output_column,
-        field_label=field["label"],
-        run_token=run_token,
-        samples_per_line=arguments.samples_per_line,
-        boundary_path=boundary_path,
-        figure_directory=figure_directory,
-        show=arguments.show,
-    )
+    print("6/6 Plotting the mext X-hour line wind profile forecasted")
+    figure_paths = plot_x_hour_profile(line_wind, value_column=output_column, field_label=field["label"],
+                                       run_token=run_token, samples_per_line=arguments.samples_per_line,
+                                       boundary_path=boundary_path, figure_directory=figure_directory,
+                                       show=arguments.show)
 
     outputs = {
         "mapping_csv": mapping_path,
@@ -1226,7 +1205,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--field",
         choices=tuple(FIELD_CONFIG),
-        default="gust-q90",
+        default=DEFAULT_FIELD,
         help=(
             "Forecast statistic to colour. Default: gust, matching the "
             "linked MeteoSwiss gust layer."

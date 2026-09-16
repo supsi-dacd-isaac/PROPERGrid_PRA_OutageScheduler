@@ -94,6 +94,8 @@ def best_candidate(results: Mapping[str, Any]) -> Mapping[str, Any]:
 def candidate_clusters(results: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """Return full-validation clusters when available, otherwise best-candidate clusters."""
     validation = results.get("full_validation_clusters")
+    if not (isinstance(validation, list) and validation):
+        validation = results.get("full_validation")
     if isinstance(validation, list) and validation:
         return validation
     return list(best_candidate(results).get("clusters", []))
@@ -153,11 +155,13 @@ def cluster_summary(results: Mapping[str, Any]) -> pd.DataFrame:
         contingencies = list(candidate.get("contingencies", []))
         total_increment = _finite(record.get("total_incremental_dns"), 0.0)
         risk = record.get("risk") or {}
-        mean_increment = (
-            _finite(risk.get("expected_loss"), np.nan)
-            if risk
-            else total_increment / max(1, len(contingencies) + 1)
-        )
+        mean_increment = _finite(record.get("mean_incremental_dns"), np.nan)
+        if not math.isfinite(mean_increment):
+            mean_increment = (
+                _finite(risk.get("expected_loss"), np.nan)
+                if risk
+                else total_increment / max(1, len(contingencies) + 1)
+            )
         rows.append(
             {
                 "cluster_id": cluster.get("cluster_id"),
@@ -195,6 +199,10 @@ def candidate_summary(results: Mapping[str, Any]) -> pd.DataFrame:
         rows.append(
             {
                 "iteration": int(candidate.get("iteration", len(rows) + 1)),
+                "source": candidate.get("source", "deterministic_search"),
+                "scheduled_outage_count": int(candidate.get("scheduled_outage_count", len(candidate.get("start_times", {})))),
+                "coverage_utility": _finite(candidate.get("coverage_utility")),
+                "timing_utility": _finite(candidate.get("timing_utility")),
                 "maintenance_utility": _finite(candidate.get("maintenance_utility")),
                 "deterministic_security_cost": _finite(candidate.get("deterministic_security_cost")),
                 "expected_dns_mw": _finite(risk.get("expected_loss")),

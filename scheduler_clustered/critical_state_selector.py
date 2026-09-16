@@ -1,4 +1,4 @@
-"""Selection of one deterministic representative operating state per cluster."""
+"""Selection of the most critical operating states in an outage cluster."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,15 +19,16 @@ class RepresentativeState:
     total_demand: float
     base_load_shedding: float
     worst_screened_contingency: str | None
+    rank: int = 1
 
 
 class CriticalStateSelector:
-    """Choose one state using peak demand or PTDF/LODF criticality.
+    """Rank operating states by load or topology-aware N-1 criticality.
 
-    For scalability, network-aware selection first shortlists the highest-load
-    periods in a cluster and then evaluates their topology-aware contingency
-    screening scores. This avoids solving a base OPF for every period in long
-    clusters while retaining spatial information in the demand realization.
+    ``select_many`` returns the requested number of distinct critical periods.
+    For scalability, network-aware ranking first shortlists the highest-load
+    periods and then evaluates a normal-state SCOPF plus PTDF/LODF screening.
+    ``select`` is retained as a compatibility wrapper returning rank one.
     """
 
     def __init__(
@@ -58,14 +59,16 @@ class CriticalStateSelector:
     def _total_demand(self, time: str) -> float:
         return float(np.sum(self.demand[self.time_index[time]]))
 
-    def _shortlist(self, cluster: OutageCluster) -> list[str]:
+    def _shortlist(self, cluster: OutageCluster, count: int) -> list[str]:
         ordered = sorted(
             cluster.times,
             key=lambda time: (-self._total_demand(time), self.time_index[time]),
         )
+        minimum = max(1, int(count))
         if self.candidate_times <= 0:
             return ordered
-        return ordered[: min(self.candidate_times, len(ordered))]
+        limit = max(minimum, self.candidate_times)
+        return ordered[: min(limit, len(ordered))]
 
     def _screen_time(
         self,
@@ -116,7 +119,6 @@ class CriticalStateSelector:
         self._cache[key] = result
         return result
 
-
     def screened_normal(
         self,
         time: str,
@@ -125,62 +127,85 @@ class CriticalStateSelector:
         """Return the cached normal state and screening result."""
         return self._screen_time(time, active_outages)
 
-    def select(self, cluster: OutageCluster) -> RepresentativeState:
+    def select_many(
+        self,
+        cluster: OutageCluster,
+        count: int = 3,
+    ) -> tuple[RepresentativeState, ...]:
+        """Return up to ``count`` distinct critical periods, worst first."""
         if not cluster.times:
             raise ValueError(f"Cluster {cluster.cluster_id} contains no periods.")
+        requested = max(1, int(count))
+        selected_count = min(requested, len(cluster.times))
 
         if self.mode == "peak_total_demand":
-            time = max(
+            ordered = sorted(
                 cluster.times,
-                key=lambda candidate: (
-                    self._total_demand(candidate),
-                    -self.time_index[candidate],
+                key=lambda time: (
+                    -self._total_demand(time),
+                    self.time_index[time],
                 ),
-            )
-            return RepresentativeState(
-                time=time,
-                selection_mode=self.mode,
-                screening_score=float("nan"),
-                total_demand=self._total_demand(time),
-                base_load_shedding=float("nan"),
-                worst_screened_contingency=None,
+            )[:selected_count]
+            return tuple(
+                RepresentativeState(
+                    time=time,
+                    selection_mode=self.mode,
+                    screening_score=float("nan"),
+                    total_demand=self._total_demand(time),
+                    base_load_shedding=float("nan"),
+                    worst_screened_contingency=None,
+                    rank=rank,
+                )
+                for rank, time in enumerate(ordered, start=1)
             )
 
-        best_time: str | None = None
-        best_normal: ClusterStateResult | None = None
-        best_score = -math.inf
-        best_contingency: str | None = None
-        best_key: tuple[float, float, float, float] | None = None
-
-        for time in self._shortlist(cluster):
+        ranked: list[
+            tuple[
+                tuple[float, float, float, float, float],
+                str,
+                ClusterStateResult,
+                float,
+                str | None,
+            ]
+        ] = []
+        for time in self._shortlist(cluster, selected_count):
             normal, screening_score, contingency = self._screen_time(
                 time, cluster.active_outages
             )
-            finite_score = (
-                1e6 if math.isinf(screening_score) else screening_score
-            )
+            finite_score = 1e6 if math.isinf(screening_score) else screening_score
             ranking = (
                 float(normal.load_shedding > 1e-7),
                 float(normal.load_shedding),
-                finite_score,
+                float(finite_score),
                 self._total_demand(time),
+                -float(self.time_index[time]),
             )
-            if best_key is None or ranking > best_key:
-                best_key = ranking
-                best_time = time
-                best_normal = normal
-                best_score = screening_score
-                best_contingency = contingency
+            ranked.append(
+                (ranking, time, normal, screening_score, contingency)
+            )
 
-        if best_time is None or best_normal is None:
-            raise RuntimeError(
-                f"Could not select a representative state for {cluster.cluster_id}."
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        result: list[RepresentativeState] = []
+        for rank, (_, time, normal, score, contingency) in enumerate(
+            ranked[:selected_count], start=1
+        ):
+            result.append(
+                RepresentativeState(
+                    time=time,
+                    selection_mode=self.mode,
+                    screening_score=float(score),
+                    total_demand=self._total_demand(time),
+                    base_load_shedding=float(normal.load_shedding),
+                    worst_screened_contingency=contingency,
+                    rank=rank,
+                )
             )
-        return RepresentativeState(
-            time=best_time,
-            selection_mode=self.mode,
-            screening_score=float(best_score),
-            total_demand=self._total_demand(best_time),
-            base_load_shedding=float(best_normal.load_shedding),
-            worst_screened_contingency=best_contingency,
-        )
+        if not result:
+            raise RuntimeError(
+                f"Could not select critical states for {cluster.cluster_id}."
+            )
+        return tuple(result)
+
+    def select(self, cluster: OutageCluster) -> RepresentativeState:
+        """Compatibility wrapper returning the highest-ranked state."""
+        return self.select_many(cluster, count=1)[0]

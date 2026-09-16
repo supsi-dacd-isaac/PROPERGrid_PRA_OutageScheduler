@@ -231,3 +231,34 @@ def validate_decomposition_data(data: Mapping) -> None:
             raise ValueError(
                 f"Contingency {contingency} references unknown generator {metadata['element']}."
             )
+
+    horizon = len(data["T"])
+    if horizon <= 0:
+        raise ValueError("The planning horizon T cannot be empty.")
+    for outage in names["outages"]:
+        duration = int(round(float(data["durations"][outage])))
+        if duration <= 0 or duration > horizon:
+            raise ValueError(
+                f"Invalid duration for {outage!r}: {duration}; horizon={horizon}."
+            )
+
+    max_tasks = data["max_tasks"]
+    if isinstance(max_tasks, Mapping):
+        unknown_times = set(max_tasks) - set(data["T"])
+        if unknown_times:
+            raise ValueError(
+                f"max_tasks references unknown periods: {sorted(unknown_times)}"
+            )
+        if any(int(value) < 0 for value in max_tasks.values()):
+            raise ValueError("max_tasks values must be non-negative.")
+    elif int(max_tasks) < 0:
+        raise ValueError("max_tasks must be non-negative.")
+
+    priorities = data.get("priority", {})
+    unknown_priorities = set(priorities) - set(names["outages"])
+    if unknown_priorities:
+        raise ValueError(
+            f"Priority values reference unknown outages: {sorted(unknown_priorities)}"
+        )
+    if any(float(value) < 0.0 for value in priorities.values()):
+        raise ValueError("Outage priorities must be non-negative.")

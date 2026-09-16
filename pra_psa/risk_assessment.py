@@ -1,6 +1,6 @@
 from pra_psa.core.contingency_analysis import *
-from tqdm import tqdm 
-import logging
+from pra_psa.reliability_performance import g_fun_loading
+from utils.utils import *
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
@@ -27,126 +27,220 @@ class NaiveProbFailureModel:
         prob_normal_and_failures = [1 - sum(Prob_contingent_states)] + Prob_contingent_states
         return prob_normal_and_failures
 
-
-def runPRA(network, n_minus_k_set=None,
-           load_time_series=None,
-           prob_cont_model=NaiveProbFailureModel(),
-           prob_load_model=NaiveProbLoadModel(),
-           pf_solver=pp.rundcpp,
-           opf_solver=pp.rundcopp):
+def runPRA(
+    network,
+    n_minus_k_set=None,
+    load_time_series=None,
+    prob_cont_model=NaiveProbFailureModel(),
+    prob_load_model=NaiveProbLoadModel(),
+    pf_solver=pp.rundcpp,
+    opf_solver=pp.rundcopp,
+    n_load_samples=25,
+    loading_limit_percent=100.0,
+    contingency_loading_limit_percent=100.0,
+    distributed_slack=False,
+):
     """
-    Compute worst-case reliability scores for a network using N-1 or N-k contingencies.
+    Preventive-dispatch PRA.
 
-    Parameters:
-    - network: pandapower network object, the electrical network to simulate.
-    - n_minus_k_set: Set of contingencies to simulate (element failures). If None, defaults to N-1 line failures.
-    - load_samples: Array or list of load samples. If None, random samples based on the nominal load will be generated.
-    - pf_solver: Power flow solver to use. Defaults to DC power flow solver (pp.rundcpp).
-
-    Returns:
-    - w_loading_lc: Matrix of worst-case line loading for each load sample and contingency.
-    - is_unsafe_lc: Binary matrix indicating whether the system is unsafe for each load sample and contingency.
+    For each load state:
+    1. solve OPF on the intact network;
+    2. freeze generator dispatch;
+    3. keep the external grid as slack/reference;
+    4. evaluate base and N-k states by PF under sampled loads;
+    5. aggregate failure probability and expected severity.
     """
 
-    # Use N-1 contingency if no N-k set is provided
+    if load_time_series is None:
+        raise ValueError("load_time_series must be provided.")
+
     if n_minus_k_set is None:
-        logger.info('Empty n_minus_k_set....using N-1 line failures')
-        n_minus_k_set = [{"element_index": l, "element_type": "line"} for l in network.line.index]
-        n_minus_k_set += [{"element_index": t, "element_type": "trafo"} for t in network.trafo.index]
+        logger.info("Empty n_minus_k_set; using N-1 line and transformer failures.")
+        n_minus_k_set = (
+            [{"element_index": l, "element_type": "line"} for l in network.line.index]
+            +
+            [{"element_index": t, "element_type": "trafo"} for t in network.trafo.index]
+        )
 
-    n_load_samples = 25
+    n_time = len(load_time_series)
+    n_cont = len(n_minus_k_set)
+    n_states = 1 + n_cont
 
-    n_load_time_steps = len(load_time_series)
-    n_contingencies = len(n_minus_k_set)
+    worst_loading_t = np.full(n_time, np.nan)
+    pf_t = np.full(n_time, np.nan)
+    mean_system_risk_t = np.full(n_time, np.nan)
+    mean_risk_c_t = np.full((n_time, n_states), np.nan)
 
-    # Preallocate result arrays
-    worst_case_severity_cont_time_t = np.zeros((n_load_time_steps,))
-    Pf_cont_t = np.zeros((n_load_time_steps,))
-    Mean_System_Risk_t = np.zeros((n_load_time_steps,))
-    Mean_Risk_c_id_t = np.zeros((n_load_time_steps,1 + n_contingencies))
-    w_loading_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
-    ext_grid_p_mw_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
-    system_fail_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
-    g_tail_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
-    n_lin_overload_tlc = np.zeros((n_load_time_steps, n_load_samples, 1 + n_contingencies))
+    w_loading_tsc = np.full((n_time, n_load_samples, n_states), np.nan)
+    ext_grid_p_tsc = np.full((n_time, n_load_samples, n_states), np.nan)
+    system_fail_tsc = np.full((n_time, n_load_samples, n_states), np.nan)
+    severity_tsc = np.full((n_time, n_load_samples, n_states), np.nan)
+    n_overload_tsc = np.full((n_time, n_load_samples, n_states), np.nan)
 
     for t_id, load_t in enumerate(load_time_series):
 
-        network.ext_grid['in_service'] = False
-        network.gen['slack'] = True
-        network.line['max_loading_percent'] = 100
-        try:  # Apply load at time t get reference power dispatch, apply the dispatch and then analyze load and failure scenarios
-            network = apply_load(network, load_t)
-            reference_p_mw, reference_q_mvar, network = get_OPF_gen(network, opf_solver=opf_solver)
-            # sensitivity_matrix, base_line_flows, network, reference_p_mw, reference_q_mvar \
-            #     = compute_sensitivity_matrix_and_base_flows( network)
-            logger.info(f" Solved OPF for base case and undamaged network")
-            network = apply_reference_dispatch(network, reference_p_mw=reference_p_mw, reference_q_mvar=reference_q_mvar)  # Optimal reference dispatch
-        except Exception as e:
-            logger.error(f"Failed to apply reference dispatch: {e}")  # Skip to next time step
+        # ------------------------------------------------------------
+        # 1. Reference OPF on intact network
+        # ------------------------------------------------------------
+        try:
+            ref_net = copy.deepcopy(network)
+
+            ref_net.ext_grid["in_service"] = True
+
+            if "slack" in ref_net.gen.columns:
+                ref_net.gen["slack"] = False
+
+            ref_net.line["max_loading_percent"] = loading_limit_percent
+
+            ref_net = apply_load(ref_net, load_t)
+
+            reference_p_mw, reference_q_mvar, ref_net = get_OPF_gen(
+                ref_net,
+                opf_solver=opf_solver,
+            )
+
+            ref_net = apply_reference_dispatch(
+                ref_net,
+                reference_p_mw=reference_p_mw,
+                reference_q_mvar=reference_q_mvar,
+            )
+
+            # Preventive dispatch is now fixed.
+            ref_dispatch_net = copy.deepcopy(ref_net)
+
+            logger.info("Solved OPF reference dispatch for time %s.", t_id)
+
+        except Exception as exc:
+            logger.error("Reference OPF failed at time %s: %s", t_id, exc)
             continue
 
+        # ------------------------------------------------------------
+        # 2. Sample load uncertainty and contingency probabilities
+        # ------------------------------------------------------------
+        load_samples = prob_load_model.sample(
+            load_t,
+            load_t * 0.2,
+            n_sam=n_load_samples,
+        )
 
-        # calculate_LODF_and_shift(network, pf_solver=pp.runpp)
-        network.line['max_loading_percent'] = 180
-        logger.info(f'{blue_c} Sampling {n_load_samples} random load from a load model and get failure probabilities from the contingency model {reset_c}')
-        load_samples = prob_load_model.sample(load_t, load_t * 0.2, n_sam=n_load_samples)
-        prob_t_normal_and_contingencies = prob_cont_model.get_probabilities(failure_set=n_minus_k_set)
+        p_cont = np.asarray(
+            prob_cont_model.get_probabilities(failure_set=n_minus_k_set),
+            dtype=float,
+        )
 
-        for l_id, random_load in tqdm(enumerate(load_samples), desc="Evaluate Random Load Normal and Contingengy State",
-                                      total=len(load_samples), ncols=100, colour="blue"): # Apply random load
+        if len(p_cont) != n_states:
+            raise ValueError(
+                "Contingency probability vector must contain one normal-state "
+                f"probability plus {n_cont} contingency probabilities."
+            )
 
-            network = apply_load(network, random_load)
+        p_load = np.full(n_load_samples, 1.0 / n_load_samples)
 
-            try:  # Run power flow on the undamaged network
-                loading, network = get_PF_loading(network, pf_solver=pf_solver, distributed_slack=True)
-                logger.info(f"{green_c} Solved: PF for load sample {l_id}/{n_load_samples} on undamaged network {reset_c}")
-            except Exception as e:
-                logger.error(f"Power flow failed for load sample {l_id} on undamaged network: {e}")
+        # ------------------------------------------------------------
+        # 3. Evaluate base and contingency PF states
+        # ------------------------------------------------------------
+        for s_id, random_load in enumerate(load_samples):
+
+            # Base state
+            try:
+                base_net = copy.deepcopy(ref_dispatch_net)
+                base_net = apply_load(base_net, random_load)
+
+                loading, base_net = get_PF_loading(
+                    base_net,
+                    pf_solver=pf_solver,
+                    distributed_slack=distributed_slack,
+                )
+
+                g_base, w_base, _, sys_fail_base = g_fun_loading(
+                    loading_percent=loading,
+                    upper_threshold=loading_limit_percent,
+                )
+
+                w_loading_tsc[t_id, s_id, 0] = w_base
+                system_fail_tsc[t_id, s_id, 0] = sys_fail_base
+                severity_tsc[t_id, s_id, 0] = g_base[g_base > 0].sum()
+                n_overload_tsc[t_id, s_id, 0] = np.sum(g_base > 0)
+
+                if len(base_net.ext_grid) > 0 and hasattr(base_net, "res_ext_grid"):
+                    ext_grid_p_tsc[t_id, s_id, 0] = base_net.res_ext_grid["p_mw"].sum()
+
+            except Exception as exc:
+                logger.error(
+                    "Base PF failed at time %s, sample %s: %s",
+                    t_id,
+                    s_id,
+                    exc,
+                )
                 continue
 
-            # Compute base case loading and safety status
-            g_base, w_base, _, sys_fail_base = g_fun_loading(loading_percent=loading)
-            w_loading_tlc[t_id, l_id, 0] = w_base
-            ext_grid_p_mw_tlc[t_id, l_id, 0]  = network.res_ext_grid['p_mw'].values[0]
-            system_fail_tlc[t_id, l_id, 0] = sys_fail_base
-            g_tail_tlc[t_id, l_id, 0] = g_base[g_base > 0].sum()  # severity score as excess loading
-            n_lin_overload_tlc[t_id, l_id, 0] = sum(g_base > 0)
-
-            # Evaluate contingencies (N-k failures)
-            for c_id, nkf in enumerate(n_minus_k_set):
+            # Contingency states
+            for c_id, contingency in enumerate(n_minus_k_set, start=1):
                 try:
-                    cont_network = apply_nk_contingency(network, failure_event=nkf)  # Apply contingency
-                    loading, cont_network = get_PF_loading(cont_network, pf_solver=pf_solver)
-                    if c_id % 100 == 0 and c_id > 0:
-                        logger.info(f"{green_c} Solved: PF for load sample {l_id}/{n_load_samples} for contingency {c_id}/{n_contingencies}  {reset_c}")
-                    # Get line loading and system failure status for contingency
-                    g_c, w_c, comp_fail_c, sys_fail_c = g_fun_loading(loading_percent=loading)
+                    cont_net = copy.deepcopy(ref_dispatch_net)
+                    cont_net = apply_load(cont_net, random_load)
+                    cont_net = apply_nk_contingency(
+                        cont_net,
+                        failure_event=contingency,
+                    )
 
-                    ext_grid_p_mw_tlc[t_id, l_id, c_id + 1] = cont_network.res_ext_grid['p_mw'].values[0]
-                    w_loading_tlc[t_id,l_id, c_id + 1] = w_c
-                    system_fail_tlc[t_id,l_id, c_id + 1] = sys_fail_c
-                    g_tail_tlc[t_id, l_id, c_id + 1] = g_c[g_c > 0].sum()
-                    n_lin_overload_tlc[t_id,l_id, c_id + 1] = sum(g_c > 0)
+                    loading, cont_net = get_PF_loading(
+                        cont_net,
+                        pf_solver=pf_solver,
+                        distributed_slack=distributed_slack,
+                    )
 
-                except Exception as e:
-                    logger.error(f"Power flow failed for load sample {l_id}, contingency {c_id}/{n_contingencies}: {e}")
-                    logger.error(f"Error for contingency {nkf}")
-                    logger.error(f"Error for contingency {nkf}")
-                    ext_grid_p_mw_tlc[t_id, l_id, 0] =  np.nan
-                    w_loading_tlc[t_id, l_id, c_id + 1] = np.nan  # Mark as unknown
-                    system_fail_tlc[t_id, l_id, c_id + 1] = np.nan  # Mark as unknown
-                    g_tail_tlc[t_id, l_id, c_id + 1] = np.nan  # Mark as unknown
-                    n_lin_overload_tlc[t_id,l_id, c_id + 1] = np.nan  # Mark as unknown
+                    g_c, w_c, _, sys_fail_c = g_fun_loading(
+                        loading_percent=loading,
+                        upper_threshold=contingency_loading_limit_percent,
+                    )
 
-        worst_case_severity_cont_time_t[t_id] = np.max(w_loading_tlc[t_id, :, 1:])
-        Pf_cont_t[t_id] = np.sum(prob_t_normal_and_contingencies[1:])  # dummy probability value.... 1 - \sum_c Prob(c) ~= Prob(normal)
+                    w_loading_tsc[t_id, s_id, c_id] = w_c
+                    system_fail_tsc[t_id, s_id, c_id] = sys_fail_c
+                    severity_tsc[t_id, s_id, c_id] = g_c[g_c > 0].sum()
+                    n_overload_tsc[t_id, s_id, c_id] = np.sum(g_c > 0)
 
-        Mean_Risk_c_id_t[t_id, 1] = prob_t_normal_and_contingencies[0] * np.mean(g_tail_tlc[t_id, :, 0])
-        Mean_Risk_c_id_t[t_id, 1:] = [prob_t_normal_and_contingencies[c_id + 1] * np.mean(g_tail_tlc[t_id, :, c_id + 1]) for c_id, con in enumerate(n_minus_k_set)]
-        Mean_System_Risk_t[t_id] = sum(Mean_Risk_c_id_t[t_id,:])
+                    if len(cont_net.ext_grid) > 0 and hasattr(cont_net, "res_ext_grid"):
+                        ext_grid_p_tsc[t_id, s_id, c_id] = cont_net.res_ext_grid["p_mw"].sum()
 
-    return Mean_System_Risk_t, Mean_Risk_c_id_t, Pf_cont_t, worst_case_severity_cont_time_t
+                except Exception as exc:
+                    logger.error(
+                        "PF failed at time %s, sample %s, contingency %s/%s: %s",
+                        t_id,
+                        s_id,
+                        c_id,
+                        n_cont,
+                        exc,
+                    )
 
+        # ------------------------------------------------------------
+        # 4. Risk aggregation
+        # ------------------------------------------------------------
+        valid_fail = np.nan_to_num(system_fail_tsc[t_id], nan=1.0)
+        valid_severity = np.nan_to_num(severity_tsc[t_id], nan=np.nan)
+
+        for c_id in range(n_states):
+            mean_severity_c = np.nansum(p_load * valid_severity[:, c_id])
+            mean_risk_c_t[t_id, c_id] = p_cont[c_id] * mean_severity_c
+
+        mean_system_risk_t[t_id] = np.nansum(mean_risk_c_t[t_id, :])
+
+        pf_t[t_id] = np.nansum(
+            p_load[:, None] * p_cont[None, :] * valid_fail
+        )
+
+        worst_loading_t[t_id] = np.nanmax(w_loading_tsc[t_id, :, :])
+
+    return {
+        "mean_system_risk_t": mean_system_risk_t,
+        "mean_risk_c_t": mean_risk_c_t,
+        "pf_t": pf_t,
+        "worst_loading_t": worst_loading_t,
+        "w_loading_tsc": w_loading_tsc,
+        "ext_grid_p_tsc": ext_grid_p_tsc,
+        "system_fail_tsc": system_fail_tsc,
+        "severity_tsc": severity_tsc,
+        "n_overload_tsc": n_overload_tsc,
+    }
 
 

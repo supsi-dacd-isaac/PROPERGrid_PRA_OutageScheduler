@@ -1,7 +1,7 @@
 from gurobipy import Model, GRB, quicksum, GurobiError
 from visualization.visualize_schedule import visualize_results
 from utils.utils import *
-from optimizers.run_optimizer import get_and_save_solution
+from scheduler_monolitic.run_optimizer import get_and_save_solution
 
 logging.basicConfig(level=logging.WARN)
 logger = logging.getLogger()

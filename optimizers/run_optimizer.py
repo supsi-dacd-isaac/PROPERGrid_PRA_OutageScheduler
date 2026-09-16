@@ -17,10 +17,10 @@ def load_data_from_conf_grid_case(conf_path=None):
     if conf_path is None:
         # Try multiple possible locations for the config file
         possible_paths = [
-            os.path.join(project_root, 'config', 'conf_IEEE24_scheduler.json'),
-            os.path.join(os.path.dirname(project_root), 'config', 'conf_IEEE24_scheduler.json'),
-            os.path.join(os.path.dirname(os.path.dirname(project_root)), 'config', 'conf_IEEE24_scheduler.json'),
-            'C:\\Users\\roberto.rocchetta.in\\OneDrive - SUPSI\\Documenti\\GitHub\\PROPER\\config\\conf_IEEE24_scheduler.json']
+            os.path.join(project_root, 'config', 'IEEE24_scheduler.json'),
+            os.path.join(os.path.dirname(project_root), 'config', 'IEEE24_scheduler.json'),
+            os.path.join(os.path.dirname(os.path.dirname(project_root)), 'config', 'IEEE24_scheduler.json'),
+            'C:\\Users\\roberto.rocchetta.in\\OneDrive - SUPSI\\Documenti\\GitHub\\PROPER\\config\\IEEE24_scheduler.json']
         for path in possible_paths:
             logging.info(f"Trying config path: {path}")
             if os.path.exists(path):

@@ -4,8 +4,8 @@ import seaborn as sns
 import numpy as np
 import pandas as pd
 from math import ceil
-sns.set_theme(style="whitegrid", palette="colorblind")
 
+sns.set_theme(style="whitegrid", palette="colorblind")
 
 def visualize_results(results_dictionary, names):
     """visualize result of the SCOS problem"""

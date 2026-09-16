@@ -1,7 +1,9 @@
 from gurobipy import Model, GRB, quicksum, GurobiError
 from utils.utils import *
-from optimizers.run_optimizer import  get_and_save_solution
-from visualization.visualize_schedule import visualize_results
+from scheduler_monolitic.run_optimizer import  get_and_save_solution
+#from visualization.visualize_schedule import visualize_results
+from visualization.monolithic_scheduler_visualization import ( plot_risk_pdf_cdf,  visualize_results, )
+
 import seaborn as sbn
 from gurobi_SCOS import (define_objective_fun, load_json, initialize_variables,
                          calculate_nodal_balance, prepare_guroby_SCOS_data, add_planned_outages_constraints, add_nodal_power_balance_constraints,
@@ -137,10 +139,14 @@ def post_process_results_cvar(res_path_name, names, T):
 
 
 def CVAR_SCOS_gurobi(data,
-                     n_samples:int=20,
+                     n_samples:int=50,
                      alpha=0.1,
-                     VOLL=1e7, use_DC_PF=True, save_res_name=None):
-    """   Probabilistic Security-Constrained Outage Scheduling problem with CVaR missmatch minimization"""
+                     VOLL=1e7,
+                     use_DC_PF=True,
+                     save_res_name=None):
+
+    """   Probabilistic Security-Constrained
+     Outage Scheduling problem with CVaR missmatch minimization"""
     #  nodal demand samples are included
 
     names = {
