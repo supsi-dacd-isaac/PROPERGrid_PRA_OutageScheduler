@@ -1,4 +1,4 @@
-from scheduler_clustered_v0.risk_metrics import weighted_var_cvar
+from scheduler_clustered.risk_metrics import weighted_var_cvar
 
 
 def test_weighted_cvar_uses_fractional_var_atom():

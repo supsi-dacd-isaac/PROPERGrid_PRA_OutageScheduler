@@ -23,9 +23,7 @@ from scheduler_clustered.runtime import (
     dataclass_config_from_json,
 )
 
-logging.basicConfig(
-    format="%(asctime)s::%(levelname)s::%(name)s::%(message)s",
-    level=logging.INFO,
+logging.basicConfig( format="%(asctime)s::%(levelname)s::%(name)s::%(message)s", level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,7 @@ def _deterministic_benchmark(data: dict) -> list:
 def main() -> None:
     network_config = os.getenv(
         "PROPER_SCHEDULER_CONFIG",
-        "./config/IEEE24_scheduler_v2.json",
+        "./config/conf_IEEE24_scheduler_v2.json",
     )
     clustered_config = os.getenv(
         "PROPER_CLUSTERED_CVAR_CONFIG",

@@ -344,6 +344,9 @@ class ClusteredCVaRScheduler:
             ClusterSCOPFResult,
         ] = {}
         self._cache_lock = threading.Lock()
+        self._solve_key_locks: dict[
+            tuple[str, tuple[str, ...], tuple[str, ...], str], threading.Lock
+        ] = {}
 
     def _normalise_benchmarks(
         self,
@@ -407,17 +410,18 @@ class ClusteredCVaRScheduler:
         )
         with self._cache_lock:
             cached = self._solve_cache.get(key)
+            key_lock = self._solve_key_locks.setdefault(key, threading.Lock())
         if cached is not None:
             return cached
-        solved = self.oracle.solve(
-            source_time,
-            active_outages,
-            contingencies=contingencies,
-            demand_override=demand,
-        )
-        with self._cache_lock:
-            self._solve_cache[key] = solved
-        return solved
+        with key_lock:
+            with self._cache_lock:
+                cached = self._solve_cache.get(key)
+            if cached is None:
+                cached = self.oracle.solve(source_time, active_outages, contingencies=contingencies,
+                                           demand_override=demand)
+                with self._cache_lock:
+                    self._solve_cache[key] = cached
+            return cached
 
     def _evaluate_scenario(
         self,
@@ -758,6 +762,7 @@ class ClusteredCVaRScheduler:
                 cluster.to_dict() for cluster in result.full_validation_clusters
             ],
             "config": asdict(self.config),
+            "oracle_statistics": self.oracle.statistics(),
             "loss_definition": (
                 "Schedule scenario loss = sum over constant-topology clusters "
                 "of (cluster duration / horizon) times [maximum incremental DNS "
@@ -771,10 +776,11 @@ class ClusteredCVaRScheduler:
                 "guarantee lower independent validation CVaR."
             ),
         }
-        Path(self.config.results_path).write_text(
-            json.dumps(json_safe(serial), indent=2, allow_nan=False),
-            encoding="utf-8",
-        )
+
+        output_path = Path(self.config.results_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(json_safe(serial), indent=2), encoding="utf-8", )
+
 
     def solve(self) -> ClusteredCVaRResult:
         termination = "iteration_limit"

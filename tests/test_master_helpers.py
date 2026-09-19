@@ -5,7 +5,7 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.gurobi]
 pytest.importorskip("gurobipy")
 
-from scheduler_clustered_v0.master_problem import (  # noqa: E402
+from scheduler_clustered.master_problem import (  # noqa: E402
     MasterSolution,
     covering_starts,
     duration_steps,

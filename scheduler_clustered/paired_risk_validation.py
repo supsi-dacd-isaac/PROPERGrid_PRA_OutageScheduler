@@ -378,13 +378,15 @@ def compare_paired_losses(
     }
 
 
-def load_validation_data(config_path: str | Path) -> dict[str, Any]:
+def load_validation_data(
+    config_path: str | Path,
+    data_overrides_config: str | Path | None = None,
+) -> dict[str, Any]:
     """Load and configure the same network model used by both schedulers."""
-    from .runtime import configured_decomposition_data
+    from .runtime import apply_data_overrides_from_json, configured_decomposition_data
 
-    return configured_decomposition_data(
-        config_path, allow_outage_deferral=True
-    )
+    data = configured_decomposition_data(config_path, allow_outage_deferral=True)
+    return apply_data_overrides_from_json(data, data_overrides_config)
 
 
 def evaluate_paired_schedules(
@@ -424,7 +426,12 @@ def evaluate_paired_schedules(
     all_contingencies = tuple(data["names"].get("contingencies", ()))
 
     baseline_cache: dict[tuple[str, tuple[str, ...]], Any] = {}
+    candidate_cache: dict[tuple[str, tuple[str, ...], tuple[str, ...]], Any] = {}
     cache_lock = threading.Lock()
+    baseline_key_locks: dict[tuple[str, tuple[str, ...]], threading.Lock] = {}
+    candidate_key_locks: dict[
+        tuple[str, tuple[str, ...], tuple[str, ...]], threading.Lock
+    ] = {}
 
     def solve_one(
         formulation: str,
@@ -432,35 +439,46 @@ def evaluate_paired_schedules(
     ) -> ScheduleSampleEvaluation:
         active = active_by_formulation[formulation][sample.source_time]
         effective = oracle.effective_contingencies(active, all_contingencies)
-        candidate = oracle.solve(
-            sample.source_time,
-            active,
-            contingencies=effective,
-            demand_override=sample.demand,
-        )
+        demand_key = demand_fingerprint(sample.demand)
+        candidate_key = (demand_key, tuple(sorted(active)), tuple(effective))
+        with cache_lock:
+            candidate = candidate_cache.get(candidate_key)
+            candidate_lock = candidate_key_locks.setdefault(
+                candidate_key, threading.Lock()
+            )
+        if candidate is None:
+            with candidate_lock:
+                with cache_lock:
+                    candidate = candidate_cache.get(candidate_key)
+                if candidate is None:
+                    candidate = oracle.solve(sample.source_time, active, contingencies=effective,
+                                             demand_override=sample.demand)
+                    with cache_lock:
+                        candidate_cache[candidate_key] = candidate
         if not math.isfinite(candidate.maximum_dns):
             raise RuntimeError(
                 f"Candidate SCOPF failed for {formulation}, "
                 f"{sample.scenario_id}."
             )
 
-        cache_key = (demand_fingerprint(sample.demand), tuple(effective))
+        cache_key = (demand_key, tuple(effective))
         with cache_lock:
             baseline = baseline_cache.get(cache_key)
+            key_lock = baseline_key_locks.setdefault(cache_key, threading.Lock())
         if baseline is None:
-            solved = oracle.solve(
-                sample.source_time,
-                (),
-                contingencies=effective,
-                demand_override=sample.demand,
-            )
-            if not math.isfinite(solved.maximum_dns):
-                raise RuntimeError(
-                    f"Baseline SCOPF failed for {formulation}, "
-                    f"{sample.scenario_id}."
-                )
-            with cache_lock:
-                baseline = baseline_cache.setdefault(cache_key, solved)
+            with key_lock:
+                with cache_lock:
+                    baseline = baseline_cache.get(cache_key)
+                if baseline is None:
+                    baseline = oracle.solve(sample.source_time, (), contingencies=effective,
+                                            demand_override=sample.demand)
+                    if not math.isfinite(baseline.maximum_dns):
+                        raise RuntimeError(
+                            f"Baseline SCOPF failed for {formulation}, "
+                            f"{sample.scenario_id}."
+                        )
+                    with cache_lock:
+                        baseline_cache[cache_key] = baseline
 
         maximum_increment = max(
             0.0, float(candidate.maximum_dns - baseline.maximum_dns)
@@ -590,6 +608,12 @@ def evaluate_paired_schedules(
             ],
         },
         "comparison": comparison,
+        "performance": {
+            "oracle_statistics": oracle.statistics(),
+            "unique_candidate_states": len(candidate_cache),
+            "unique_baseline_states": len(baseline_cache),
+            "requested_schedule_sample_evaluations": len(tasks),
+        },
         "deterministic_evaluations": [
             record.to_dict() for record in by_formulation["deterministic"]
         ],
@@ -622,12 +646,13 @@ def _parser() -> argparse.ArgumentParser:
         default=Path(
             os.getenv(
                 "PROPER_SCHEDULER_CONFIG",
-                "./config/IEEE24_scheduler_v2.json",
+                "./config/conf_IEEE24_scheduler_v2.json",
             )
         ),
         help="Scheduler input configuration used to reconstruct the network.",
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--data-overrides-config", type=Path, help="Clustered JSON used to reproduce data overrides/benchmark slices.")
     parser.add_argument("--scenario-count", type=int, default=96)
     parser.add_argument("--scenario-seed", type=int, default=20260727)
     parser.add_argument(
@@ -698,7 +723,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         oracle_workers=int(args.oracle_workers),
         winner_tolerance_mw=float(args.winner_tolerance_mw),
     )
-    data = load_validation_data(args.config)
+    data = load_validation_data(args.config, args.data_overrides_config)
     result = evaluate_paired_schedules(
         data,
         deterministic_results,

@@ -78,7 +78,7 @@ BUS_ID, LINE_ID, FROM_BUS, TO_BUS= "bus_i", "line_id", "fbus", "tbus"
 DEFAULT_HOURS = 32
 DEFAULT_SAMPLES_PER_LINE = 5
 DEFAULT_MAX_POI_DISTANCE_KM = 10.0
-DEFAULT_FIELD="speed-q90"
+DEFAULT_FIELD="gust-q90"
 # MeteoSwiss local-forecast parameters. Wind speeds are supplied in km/h.
 FIELD_CONFIG = {
     "gust": {

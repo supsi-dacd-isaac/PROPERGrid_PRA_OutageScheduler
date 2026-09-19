@@ -68,8 +68,8 @@ The repository contains several related scheduling implementations:
 
 The clustered implementation groups consecutive periods having the same planned-outage topology and evaluates them through security-constrained operational subproblems. Detailed mathematical and implementation notes are kept in:
 
-- [`scheduler_clustered/README_CLUSTERED_DETERMINISTIC.md`](scheduler_clustered_v0/README_CLUSTERED_DETERMINISTIC.md)
-- [`scheduler_clustered/README_CLUSTERED_CVAR.md`](scheduler_clustered_v0/README_CLUSTERED_CVAR.md)
+- [`scheduler_clustered/README_CLUSTERED_DETERMINISTIC.md`](scheduler_clustered/README_CLUSTERED_DETERMINISTIC.md)
+- [`scheduler_clustered/README_CLUSTERED_CVAR.md`](scheduler_clustered/README_CLUSTERED_CVAR.md)
 
 ### 4. Visualisation and demonstrations
 
@@ -193,13 +193,13 @@ The default configuration is selected inside `scheduler/main.py`.
 ### Clustered deterministic scheduler
 
 ```bash
-python -m scheduler_clustered_v0.main_clustered
+python -m scheduler_clustered.main_clustered
 ```
 
 ### Clustered CVaR-guided scheduler
 
 ```bash
-python -m scheduler_clustered_v0.main_clustered_cvar
+python -m scheduler_clustered.main_clustered_cvar
 ```
 
 ### Compare clustered deterministic and CVaR results

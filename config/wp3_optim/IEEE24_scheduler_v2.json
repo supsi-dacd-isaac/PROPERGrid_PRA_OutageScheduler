@@ -8,9 +8,9 @@
   "cost_per_days":  [2000, 2000, 1000, 1000, 2000, 2000, 2000, 2000, 2000, 5000, 5000,  5000, 5000],
   "expected_duration_days": [25, 20, 55, 20, 30, 30,30, 30, 30, 30, 60, 60, 60],
   "priorities": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-  "load_scaling_factor": 0.8,
+  "load_scaling_factor": 1.2,
   "VoLL": 1e4,
-  "n_samples": 200,
+  "n_samples": 500,
   "tail_prob_constraint": 0.8,
   "use_DC_PF": false,
   "max_number_of_maintenance_tasks": 2

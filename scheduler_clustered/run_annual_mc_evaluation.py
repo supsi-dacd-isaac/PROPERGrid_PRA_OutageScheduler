@@ -34,7 +34,7 @@ from scheduler_clustered.runtime import (  # noqa: E402
 # =============================================================================
 
 # Main PROPER scheduler configuration.
-CONFIG_FILE = _REPO_ROOT / "config" / "IEEE24_scheduler_v2.json"
+CONFIG_FILE = _REPO_ROOT / "config" / "conf_IEEE24_scheduler_v2.json"
 
 # Choose one input mode:
 #   "common"   -> one common_risk_comparison_results.json file

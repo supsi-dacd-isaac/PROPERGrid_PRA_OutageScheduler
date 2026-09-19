@@ -712,7 +712,7 @@ if __name__ == "__main__":
         failure_threshold=0.0,
         seed=7,
         exact_probability=exact_pf,
-        figure_path=Path("outputs/subset_simulation_demo/convergence_mc_vs_subset.png"),
+        figure_path=Path("./outputs/wp2/subset_simulation_demo/convergence_mc_vs_subset.png"),
     )
 
     print()

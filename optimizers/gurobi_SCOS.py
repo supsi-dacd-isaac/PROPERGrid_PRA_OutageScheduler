@@ -164,23 +164,17 @@ def define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d
      """
     # todo: check weights and scaling factors
     # todo: move cost of PM to budget constraint
-
     # 1) PM
     nt = len(T)
-    # * step_cost_outage[o]
-    Objective_fun = quicksum(
-        (nt - t_idx) / nt * xt[t, o] * priority[o] for t_idx, t in enumerate(T) for o in names['outages'])
-
+    Objective_fun = quicksum((nt - t_idx) / nt * xt[t, o] * priority[o]  for t_idx, t in enumerate(T) for o in names['outages'])
     # 2) VoLL
     scale_weight1 = (nt * len(names['buses']))
     scale_weight2 = (scale_weight1 * len(names['contingencies']))
     Objective_fun -= VOLL * quicksum(d_wc[t, n] for n in names['buses'] for t in T) / scale_weight1  # Add the curtailment term
     Objective_fun -= VOLL * quicksum(d_wc_c[t, n, c] for n in names['buses'] for c in names['contingencies'] for t in T)/scale_weight2
-
     # 3) Operational costs
     Objective_fun -= quicksum(pgen[t, g] for g in names['generators'] for t in T) / scale_weight1
-    Objective_fun -= quicksum(
-        pgen_c[t, g, c] for g in names['generators'] for c in names['contingencies'] for t in T) / scale_weight2
+    Objective_fun -= quicksum(pgen_c[t, g, c] for g in names['generators'] for c in names['contingencies'] for t in T) / scale_weight2
     return Objective_fun
 
 
@@ -194,36 +188,23 @@ def prepare_guroby_SCOS_data(data, names):
     p_min = {gn: v * 0 for gn, v in zip(names['generators'], net.gen['min_p_mw'])}  # todo fixme
     f_lim = {ln: v for ln, v in zip(names['lines'], data['branch_capacity'])}
     g2bus = [f'bus_{g}' for g in net.gen['bus'].values.tolist()]
-
     # Precompute generator to node mapping
     gen_to_node = {b: names['generators'][idx] for idx, b in enumerate(g2bus)}
-
-    #S = net._ppc["internal"]['Cft'].A.T  # S[l,b]=1 if line l 'enter' bus b, -1 if it 'exit' bus b
-    #B_mat = np.real(_ppc_internal['Bf'].A)
-
-    # B_mat = np.real(_ppc_internal['Bf'].A)
     S = as_dense_array(_ppc_internal["Cft"]).T
     Bf = as_dense_array(_ppc_internal["Bf"])
     B_mat = np.real(Bf)
-
     B_lines = np.max(B_mat, axis=1)
     if names['contingencies'] is None:  # Generator indices
         names['contingencies'] = [f'n1_{l}' for l in names['lines']] + [f'n1_{g}' for g in names['generators']]
-
     # Pre-fetch some values for efficiency
     priority = {o_nam: data['outages']['priorities'][o] for o, o_nam in enumerate(names['outages'])}
     durations = {o_nam: data['outages']['expected_duration_steps'][o] for o, o_nam in enumerate(names['outages'])}
     step_cost_outage = {o_nam: data['outages']['cost_per_step'][o] for o, o_nam in enumerate(names['outages'])}
-
     return T, max_tasks, p_max, p_min, f_lim, g2bus, gen_to_node, S, B_mat, B_lines, priority, durations, step_cost_outage
 
 
 def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None):
     """ Deterministic security-constrained outage planner"""
-    # todo:
-    #  1. check if adding DC power flow equations and voltage angles makes it more interesting.
-    #  2. added big-M linear constraints to replace quadratic y(1-x) <= b terms on the dc power flow equations
-
     names = {
             'outages': data['outages']['names'],  # List of outage names
             'lines': [f'line_{ll}' for ll in range(data['num_branches'])],  # List of line names
@@ -237,14 +218,11 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
      g2bus, gen_to_node, S, B_mat, B_lines,
      priority, durations, step_cost_outage) = prepare_guroby_SCOS_data(data, names)
 
-    # ---- START ----
-    # PROBLEM: Deterministic Security-Constrained Outage Scheduling problem
+    # ---- START  PROBLEM: Deterministic Security-Constrained Outage Scheduling problem
     try:
-        # ---- define the model
-        M = Model("Transmission_Outage_Scheduling_Deterministic")
-        # ---- VARIABLES
-        M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c = initialize_variables(M, names, T)
 
+        M = Model("Transmission_Outage_Scheduling_Deterministic") # ---- define the model
+        M, xt, sxt, ext, pgen, pgen_c, d_wc, d_wc_c, f, f_c = initialize_variables(M, names, T)# ---- VARIABLES
         # ----  OBJECTIVE FUNCTION ---- :
         Objective_fun = define_objective_fun(T, xt, priority, step_cost_outage, names, VOLL, d_wc, d_wc_c, pgen, pgen_c)
         M.setObjective(Objective_fun, GRB.MAXIMIZE)
@@ -317,9 +295,6 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
                         aux_var = B_delta_theta  # No outage
 
                     M.addConstr(f[t, l] == aux_var, name=f"Flow_{t}_{l}_DC_eq")
-                    # todo: check if Add constraints for main flow has been linearized
-                    # M.addConstr(f[t, l] == B_delta_theta, name=f"Flow_{t}_{l}_DC_eq")
-
                     # Contingency loop
                     for c in contingencies_set:
                         # Gather contingency phases
@@ -353,11 +328,8 @@ def deterministic_SCOS_gurobi(data, VOLL=1e7, use_DC_PF=True, save_res_name=None
         # Check optimization status
         save_res_dir = ("../outputs/schedule_results/monolitic_scheduler/optim_sol_det_" +
                         data['config']['case_name'] + '_' + data['config']['aggregation_time'] + ".json")
-
         M.update()
-
         M.optimize()
-
 
         solution = get_and_save_solution(M, save_res_dir=save_res_dir,
                                          case_name=data['config']['case_name'],

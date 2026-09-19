@@ -100,7 +100,7 @@ from scheduler_clustered.runtime import (  # noqa: E402
 # =============================================================================
 
 # Main network, demand, outage and scheduler data configuration.
-SCHEDULER_CONFIG = _REPO_ROOT / "config" / "IEEE24_scheduler_v2.json"
+SCHEDULER_CONFIG = _REPO_ROOT / "config" / "conf_IEEE24_scheduler_v2.json"
 
 # Clustered formulation configurations already present in scheduler_clustered/.
 DETERMINISTIC_CONFIG = _PACKAGE_DIR / "config_clustered_example.json"

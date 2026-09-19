@@ -1,5 +1,5 @@
 # tests/test_monte_carlo.py
-from pra_psa.simulation.monte_carlo import run_monte_carlo
+from pra_psa.sampler.monte_carlo import run_monte_carlo
 from pra_psa.core.contingency import generate_n1_contingencies
 from pandapower.networks import case14
 

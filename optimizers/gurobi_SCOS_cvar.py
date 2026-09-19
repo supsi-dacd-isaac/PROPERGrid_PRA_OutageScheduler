@@ -12,12 +12,10 @@ from gurobi_SCOS import (define_objective_fun, load_json, initialize_variables,
 logging.basicConfig(level=logging.WARN)
 logger = logging.getLogger()
 
-
 def transform_to_fat_tailed(noise, power):
     # Apply a power transformation (e.g., squaring the normal samples)
     fat_tailed_samples = np.sign(noise) * np.abs(noise)**power
     return fat_tailed_samples
-
 
 def demand_sampler(nodal_demand, n_samples: int, random_seed: int = 42):
     """
@@ -28,18 +26,15 @@ def demand_sampler(nodal_demand, n_samples: int, random_seed: int = 42):
     nodal_demand_samples = []
     for s_idx in range(n_samples):
         for scenario in range(n_samples):  # For the current bus, sample around each existing load value
-            # For each scenario, perturb the value by adding Gaussian noise
-            # 5% noise as an example and transform it to a fat-tailed distribution
+            # For each scenario, perturb by adding Gaussian noise 5% noise as an example and transform it to a fat-tailed distribution
             noise = np.random.normal(loc=0, scale=0.05 * nodal_demand)
             nodal_demand_samples.append(nodal_demand  + transform_to_fat_tailed(noise, power=1.3))
     return nodal_demand_samples
 
 
 def plot_risk_pdf_cdf(CVARisk):
-
     # Aggregate CVaR across all buses for each time step
     cvar_over_time = CVARisk.sum(axis=0)  # Sum of CVaR for all buses at each step
-
     # Create the line plot
     plt.figure(figsize=(10, 6))
     plt.plot(cvar_over_time, marker='o', linestyle='-', color='red')
@@ -51,10 +46,8 @@ def plot_risk_pdf_cdf(CVARisk):
     step_interval = 30
     ticks = range(0, len(cvar_over_time), step_interval)
     plt.xticks(ticks, labels=[f"step_{i}" for i in ticks], rotation=45)
-
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.show()
-
     # Flatten the CVARisk dataframe into a single array
     all_bus_data = CVARisk.values.flatten()
     # Create the combined distribution plot
@@ -65,8 +58,6 @@ def plot_risk_pdf_cdf(CVARisk):
     plt.ylabel("Frequency", fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.show()
-
-
     plt.figure(figsize=(10, 8))
     for bus in CVARisk.index:
         sbn.ecdfplot(CVARisk.loc[bus], label=bus, linewidth=1.5)

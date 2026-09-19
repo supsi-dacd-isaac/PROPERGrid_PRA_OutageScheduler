@@ -19,3 +19,5 @@ pyomo
 joblib>=1.1.0
 meteodata-lab[polytope,regrid]
 
+# Development / validation
+pytest>=8.0

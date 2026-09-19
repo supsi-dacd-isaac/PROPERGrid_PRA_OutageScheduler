@@ -142,7 +142,7 @@ From the PROPER repository root:
 
 ```bash
 python -m scheduler_clustered.run_cluster_comparison \
-  --config config/IEEE24_scheduler_v2.json
+  --config config/conf_IEEE24_scheduler_v2.json
 ```
 
 Environment variables:
@@ -174,6 +174,65 @@ values as empirical estimates. Use the complete N-1 set for final validation,
 keep scenario seeds fixed for paired comparisons, and perform a separate
 out-of-sample or rolling-origin validation.
 
+## 8. Three-axis scalability evidence
+
+The comparison driver exposes `main_scalability()` and the `scalability`
+subcommand. It varies (i) network size, using IEEE-24 and IEEE-118, (ii) the
+number of planned outages, and (iii) the horizon length. Solver, scenario and
+candidate budgets remain fixed across points.
+
+```bash
+python -m scheduler_clustered.run_cluster_comparison scalability \
+  --grid-case IEEE24=config/conf_IEEE24_scheduler_v2.json \
+  --grid-case IEEE118=config/conf_IEEE118_scheduler_v2.json \
+  --outage-counts 2 4 8 \
+  --horizons 12 24 48 \
+  --repeats 3 \
+  --deterministic-config scheduler_clustered/config_clustered_example.json \
+  --cvar-config scheduler_clustered/config_clustered_cvar_example.json
+```
+
+By default the study times optimisation only: figures and paired risk
+validation are skipped at every scaling point. This is deliberate because the
+reviewer comment concerns scheduler scalability. Use
+`--validation-samples 96 --validation-workers 4` only when validation runtime
+must also be measured.
+
+The runner preserves every run and writes `scalability_results.json`, raw and
+aggregated CSV files, a LaTeX table, a runtime figure,
+`scalability_report.md`, and `reviewer_response.md`. It records dimensions,
+candidate/scenario budgets, wall-clock times, best-effort memory, termination
+status, software/hardware metadata and the exact selected outage list.
+
+For development, `--profile fast` reduces candidates, scenarios, critical
+states and screened contingencies. Fast-profile results are automatically
+marked non-evidentiary. For final results use the default `evidence` profile,
+prefer at least three repeats, and keep identical settings across grid cases.
+
+Every comparison run also writes `computational_performance.json`. The output
+records whether the deterministic schedule was included in the CVaR candidate
+pool; this must be `true` for the stated in-sample risk guardrail. The driver
+now stops when it is false. `--allow-missing-benchmark` exists only to inspect
+old, non-evidentiary runs.
+
+The generated reviewer wording is guarded: it becomes favourable only when
+IEEE-118 and a comparison grid complete under matched evidence-profile settings
+and the deterministic schedule is present in every CVaR candidate pool. Even
+then the conclusion is bounded to demonstrated execution on IEEE-118; empirical
+log--log slopes are descriptive and are not complexity proofs.
+
+## 9. Runtime reductions
+
+- `--skip-plots --skip-validation` isolates scheduler time.
+- Increase `oracle_workers` while keeping `cluster_oracle_threads=1` to avoid
+  nested thread oversubscription.
+- Use `contingency_top_k` during candidate search, but retain the complete N-1
+  catalogue for the final evidentiary validation.
+- The deterministic, CVaR and paired-validation caches coalesce simultaneous
+  requests for identical SCOPF states, avoiding duplicate solves.
+- Use `--reuse-point POINT=RUN_DIR` to resume an interrupted benchmark without
+  rerunning completed points.
+
 ## Full-horizon paired Monte Carlo N-1 validation
 
 Evaluate the deterministic and CVaR schedules over every planning time step and
@@ -182,7 +241,7 @@ Gaussian load trajectories:
 
 ```bash
 python -m scheduler_clustered.main_annual_mc_evaluation \
-  --config config/IEEE24_scheduler_v2.json \
+  --config config/conf_IEEE24_scheduler_v2.json \
   --results scheduler_clustered/outputs/cluster_scheduler/common_risk_comparison_results.json \
   --mc-config scheduler_clustered/config_annual_mc_example.json \
   --years 20 \

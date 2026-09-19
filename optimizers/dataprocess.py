@@ -156,7 +156,7 @@ def plot_ecdf_show(val, xlb: str = 'x', ylb: str = 'ecdf', **kwargs):
 def prepare_data(conf_path = None):
     # Load system data and historical nodal demand data
     if conf_path is None:
-        conf_path = '../config/IEEE24_scheduler.json'
+        conf_path = '../config/wp3_optim/IEEE24_scheduler.json'
 
     network, hourly_demand, config = data_loader(conf_path)
     aggregation_step = config['aggregation_time']  # 'W', 'D', '12H', 'H,  etc.

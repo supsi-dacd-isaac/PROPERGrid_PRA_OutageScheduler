@@ -15,25 +15,15 @@ from statsmodels.distributions.empirical_distribution import ECDF
 import hashlib
 
 # ANSI escape code for colored text
-blue_c, green_c, purple_c, cyan_c, red_c, gray_c = "\033[94m", "\033[92m", "\033[95m", "\033[96m", "\033[91m", " "
+blue_c, green_c = "\033[94m", "\033[92m"
+purple_c, cyan_c, red_c, gray_c = "\033[95m", "\033[96m", "\033[91m", " "
 bold_c, underline_c, reset_c = "\033[1m", "\033[4m", "\033[0m"
-
-# logging details
-logger = logging.getLogger()
+logger = logging.getLogger() # logging details
 logging.basicConfig(format='%(asctime)-15s::%(levelname)s::%(funcName)s::%(message)s', level=logging.INFO)
 
 
-"""
-def get_project_root() -> Path: 
-    return Path(__file__).parent.parent
-"""
-
 def get_project_root(marker_files: Sequence[str] = (".git", "pyproject.toml", "setup.py")) -> Path:
-    """
-    Return the root of the project by looking for one of the given marker files/directories.
-    Starts from this file and walks up until it finds a parent containing any marker.
-    Raises FileNotFoundError if no marker is found.
-    """
+    """ Return the root of the project by looking for one of the given marker  """
     # First try to find a directory named "PROPER"
     current = Path(__file__).resolve()
     logging.info(f"Current file path: {current}")

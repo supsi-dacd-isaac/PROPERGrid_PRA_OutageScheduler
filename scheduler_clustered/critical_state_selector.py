@@ -79,11 +79,7 @@ class CriticalStateSelector:
         if key in self._cache:
             return self._cache[key]
 
-        normal_result = self.oracle.solve(
-            time,
-            active_outages,
-            contingencies=(),
-        )
+        normal_result = self.oracle.solve(time, active_outages, contingencies=())
         normal = normal_result.normal_state
         outaged_lines = {
             outage

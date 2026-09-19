@@ -1,0 +1,18 @@
+{
+  "case_name": "IEEE24",
+  "data_path": "data/powersystems",
+  "panda_power_case_name": "case24_ieee_rts",
+  "aggregation_time": "D",
+  "comp_types": ["line", "line", "line", "gen"],
+  "comp_ids": [0, 1, 2, 4],
+  "cost_per_days":  [2000, 2000, 1000, 5000],
+  "expected_duration_days": [25, 20, 25, 120],
+  "priorities": [1, 1, 1, 1],
+  "load_scaling_factor": 1.2,
+  "VoLL": 1e4,
+  "n_samples": 200,
+  "tail_prob_constraint": 0.8,
+  "use_DC_PF": false,
+  "max_number_of_maintenance_tasks": 2
+}
+

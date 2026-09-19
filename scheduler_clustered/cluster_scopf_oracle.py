@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Sequence
 import threading
+import time as _time
 
 import numpy as np
 from gurobipy import GRB, Env, Model, quicksum
@@ -67,6 +68,28 @@ class ClusterSCOPFOracle:
         self.corrective_down = data.get("corrective_down", {})
         self.generation_cost = data.get("generation_cost", {})
         self._thread_local = threading.local()
+        self._statistics_lock = threading.Lock()
+        self._solve_calls = 0
+        self._state_models = 0
+        self._wall_time_seconds = 0.0
+
+    def _record_solve(self, states: int, started: float) -> None:
+        with self._statistics_lock:
+            self._solve_calls += 1
+            self._state_models += int(states)
+            self._wall_time_seconds += float(_time.perf_counter()
+ - started)
+
+    def statistics(self) -> dict[str, float | int]:
+        with self._statistics_lock:
+            calls, states, wall = self._solve_calls, self._state_models, self._wall_time_seconds
+        return {
+            "solve_calls": calls,
+            "state_models": states,
+            "cumulative_solve_wall_time_seconds": wall,
+            "mean_seconds_per_solve": wall / calls if calls else 0.0,
+            "mean_states_per_solve": states / calls if calls else 0.0,
+        }
 
     def _environment(self) -> Env | None:
         if not bool(self.data.get("oracle_isolated_env", True)):
@@ -279,12 +302,13 @@ class ClusterSCOPFOracle:
 
     def solve(
         self,
-        time: str,
+        time_index: str,
         active_planned_outages: Sequence[str],
         *,
         contingencies: Sequence[str] | None = None,
         demand_override: Sequence[float] | np.ndarray | None = None,
     ) -> ClusterSCOPFResult:
+        started = _time.perf_counter()
         active_outages = set(active_planned_outages)
         effective = self.effective_contingencies(
             active_planned_outages, contingencies
@@ -297,7 +321,7 @@ class ClusterSCOPFOracle:
             for contingency in state_contingencies
         }
         if demand_override is None:
-            demand = self._demand_at(time)
+            demand = self._demand_at(time_index)
         else:
             demand = np.asarray(demand_override, dtype=float).reshape(-1).copy()
             if demand.shape != (len(self.network.buses),):
@@ -313,9 +337,9 @@ class ClusterSCOPFOracle:
 
         environment = self._environment()
         if environment is None:
-            model = Model(f"cluster_scopf::{time}")
+            model = Model(f"cluster_scopf::{time_index}")
         else:
-            model = Model(f"cluster_scopf::{time}", env=environment)
+            model = Model(f"cluster_scopf::{time_index}", env=environment)
         model.Params.OutputFlag = 0
         model.Params.Threads = int(self.data.get("cluster_oracle_threads", 1))
         model.Params.Method = int(self.data.get("cluster_oracle_method", 1))
@@ -493,7 +517,7 @@ class ClusterSCOPFOracle:
         acceptable = {GRB.OPTIMAL, GRB.SUBOPTIMAL}
         if model.Status not in acceptable or model.SolCount <= 0:
             result = ClusterSCOPFResult(
-                time=time,
+                time=time_index,
                 active_planned_outages=tuple(sorted(active_outages)),
                 contingencies=effective,
                 status=model.Status,
@@ -504,6 +528,7 @@ class ClusterSCOPFOracle:
                 states={},
             )
             model.dispose()
+            self._record_solve(len(state_contingencies), started)
             return result
 
         states: dict[str, ClusterStateResult] = {}
@@ -569,7 +594,7 @@ class ClusterSCOPFOracle:
             )
 
         result = ClusterSCOPFResult(
-            time=time,
+            time=time_index,
             active_planned_outages=tuple(sorted(active_outages)),
             contingencies=effective,
             status=model.Status,
@@ -580,4 +605,5 @@ class ClusterSCOPFOracle:
             states=states,
         )
         model.dispose()
+        self._record_solve(len(state_contingencies), started)
         return result

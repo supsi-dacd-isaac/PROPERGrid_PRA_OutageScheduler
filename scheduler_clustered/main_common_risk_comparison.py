@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     network_config = os.getenv(
         "PROPER_SCHEDULER_CONFIG",
-        "./config/IEEE24_scheduler_v2.json",
+        "./config/conf_IEEE24_scheduler_v2.json",
     )
     data = configured_decomposition_data(
         network_config, allow_outage_deferral=True

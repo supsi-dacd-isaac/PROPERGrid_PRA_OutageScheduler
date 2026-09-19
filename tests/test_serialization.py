@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from scheduler_clustered_v0.serialization import json_safe
+from scheduler_clustered.serialization import json_safe
 
 
 @dataclass

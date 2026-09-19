@@ -258,6 +258,7 @@ class ClusteredDeterministicScheduler:
             tuple[str, tuple[str, ...]], ClusterSCOPFResult
         ] = {}
         self._baseline_lock = threading.Lock()
+        self._baseline_key_locks: dict[tuple[str, tuple[str, ...]], threading.Lock] = {}
         self.candidates: list[ClusterCandidateRecord] = []
         self.best_solution: MasterSolution | None = None
         self.best_score = -math.inf
@@ -293,11 +294,17 @@ class ClusteredDeterministicScheduler:
         key = (time, tuple(contingencies))
         with self._baseline_lock:
             cached = self.baseline_cache.get(key)
+            key_lock = self._baseline_key_locks.setdefault(key, threading.Lock())
         if cached is not None:
             return cached
-        solved = self.oracle.solve(time, (), contingencies=contingencies)
-        with self._baseline_lock:
-            return self.baseline_cache.setdefault(key, solved)
+        with key_lock:
+            with self._baseline_lock:
+                cached = self.baseline_cache.get(key)
+            if cached is None:
+                cached = self.oracle.solve(time, (), contingencies=contingencies)
+                with self._baseline_lock:
+                    self.baseline_cache[key] = cached
+            return cached
 
     def _evaluate_state(
         self,
@@ -307,11 +314,7 @@ class ClusteredDeterministicScheduler:
         contingencies = self._selected_contingencies(
             representative, cluster.active_outages
         )
-        candidate = self.oracle.solve(
-            representative.time,
-            cluster.active_outages,
-            contingencies=contingencies,
-        )
+        candidate = self.oracle.solve(representative.time, cluster.active_outages, contingencies=contingencies)
         baseline = self._baseline(representative.time, contingencies)
         maximum_increment = max(
             0.0, candidate.maximum_dns - baseline.maximum_dns
@@ -520,6 +523,7 @@ class ClusteredDeterministicScheduler:
                 evaluation.to_dict() for evaluation in result.full_validation
             ],
             "config": asdict(self.config),
+            "oracle_statistics": self.oracle.statistics(),
             "deterministic_risk_definition": (
                 "For every constant-topology cluster, evaluate the q most "
                 "critical periods. Severity is duration weighted and combines "
@@ -527,10 +531,14 @@ class ClusteredDeterministicScheduler:
                 "normal and N-1 states."
             ),
         }
-        Path(self.config.results_path).write_text(
-            json.dumps(json_safe(serial), indent=2, allow_nan=False),
-            encoding="utf-8",
-        )
+
+        output_path = Path(self.config.results_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        output_path.write_text(
+            json.dumps(json_safe(serial), indent=2),
+            encoding="utf-8", )
+
 
     def solve(self) -> ClusteredDeterministicResult:
         termination = "iteration_limit"

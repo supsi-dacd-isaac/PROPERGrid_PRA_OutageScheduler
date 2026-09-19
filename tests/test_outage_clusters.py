@@ -1,4 +1,4 @@
-from scheduler_clustered_v0.outage_clusters import build_outage_clusters
+from scheduler_clustered.outage_clusters import build_outage_clusters
 
 
 def test_static_topology_clusters_match_overlap_example():

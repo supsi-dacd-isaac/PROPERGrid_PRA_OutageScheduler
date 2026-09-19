@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import fields
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Mapping, TypeVar
+from typing import Any, Mapping, Sequence, TypeVar
 import json
 
 from .data_adapter import augment_for_decomposition, validate_decomposition_data
@@ -117,5 +117,111 @@ def apply_data_overrides_from_json(
             data[key] = merged
         else:
             data[key] = value
+    benchmark_slice = document.get("benchmark_slice")
+    if benchmark_slice is not None:
+        if not isinstance(benchmark_slice, Mapping):
+            raise ValueError("Configuration section 'benchmark_slice' must be a mapping.")
+        apply_benchmark_slice(data, benchmark_slice)
     validate_decomposition_data(data)
+    return data
+
+
+def apply_benchmark_slice(data: dict[str, Any], settings: Mapping[str, Any]) -> dict[str, Any]:
+    """Create a controlled horizon/outage view for scalability experiments only.
+
+    The grid topology is unchanged. Horizon rows are taken in order and repeated
+    cyclically only when the requested horizon is longer than the source data.
+    Outage windows are normalised by default so horizon scaling measures problem
+    size rather than calendar-window infeasibility. The applied transformation is
+    retained in ``data['benchmark_slice']`` for reporting.
+    """
+    source_times = list(data["T"])
+    if not source_times:
+        raise ValueError("Cannot benchmark an empty source horizon.")
+    horizon = int(settings.get("horizon_steps", len(source_times)))
+    if horizon <= 0:
+        raise ValueError("benchmark_slice.horizon_steps must be positive.")
+
+    source_positions = [index % len(source_times) for index in range(horizon)]
+    if horizon <= len(source_times):
+        times = source_times[:horizon]
+    else:
+        times = [f"benchmark_t{index + 1:04d}" for index in range(horizon)]
+    demand = data["nodal_demand"].iloc[source_positions].copy()
+    demand.index = times
+    data["T"], data["nodal_demand"] = times, demand
+
+    max_tasks = data.get("max_tasks")
+    if isinstance(max_tasks, Mapping):
+        data["max_tasks"] = {
+            target: max_tasks[source_times[position]]
+            for target, position in zip(times, source_positions)
+        }
+    capacities = data.get("resource_capacities", {})
+    data["resource_capacities"] = {
+        resource: (
+            {
+                target: values[source_times[position]]
+                for target, position in zip(times, source_positions)
+            }
+            if isinstance(values, Mapping)
+            else values
+        )
+        for resource, values in capacities.items()
+    }
+
+    available = list(data["names"]["outages"])
+    explicit = settings.get("outages")
+    if explicit is not None:
+        if isinstance(explicit, (str, bytes)) or not isinstance(explicit, Sequence):
+            raise ValueError("benchmark_slice.outages must be a sequence of outage names.")
+        selected = [str(value) for value in explicit]
+        unknown = sorted(set(selected) - set(available))
+        if unknown:
+            raise ValueError(f"Unknown benchmark outages: {unknown}")
+    else:
+        count = int(settings.get("outage_count", len(available)))
+        if count <= 0 or count > len(available):
+            raise ValueError(f"benchmark_slice.outage_count must be in [1, {len(available)}].")
+        selected = available[:count]
+    selected_set = set(selected)
+    data["names"] = dict(data["names"])
+    data["names"]["outages"] = selected
+
+    def filter_mapping(name: str) -> None:
+        if isinstance(data.get(name), Mapping):
+            data[name] = {key: value for key, value in data[name].items() if key in selected_set}
+
+    for name in ("durations", "priority", "defer_penalty", "outage_start_windows"):
+        filter_mapping(name)
+    too_long = {name: value for name, value in data["durations"].items() if int(round(float(value))) > horizon}
+    if too_long:
+        raise ValueError(f"Outage durations exceed the benchmark horizon {horizon}: {too_long}")
+
+    usage = data.get("resource_usage", {})
+    data["resource_usage"] = {
+        resource: {outage: value for outage, value in values.items() if outage in selected_set}
+        for resource, values in usage.items()
+    }
+    for name in ("mutually_exclusive_outages", "incompatible_outage_groups"):
+        groups = [[outage for outage in group if outage in selected_set] for group in data.get(name, [])]
+        data[name] = [group for group in groups if len(group) >= 2]
+    data["precedence"] = [
+        relation for relation in data.get("precedence", [])
+        if len(relation) >= 2 and relation[0] in selected_set and relation[1] in selected_set
+    ]
+    if bool(settings.get("normalise_windows", True)):
+        data["outage_start_windows"] = {
+            outage: [0, horizon - int(round(float(data["durations"][outage])))]
+            for outage in selected
+        }
+
+    data["benchmark_slice"] = {
+        "source_horizon_steps": len(source_times),
+        "horizon_steps": horizon,
+        "source_outage_count": len(available),
+        "outage_count": len(selected),
+        "outages": selected,
+        "normalised_windows": bool(settings.get("normalise_windows", True)),
+    }
     return data

@@ -22,4 +22,9 @@ dependencies = [
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
-include = ["pra_psa*"]
+include = [
+    "pra_psa*",
+    "probabilistic_models*",
+    "scheduler_clustered*",
+    "scheduler_monolitic*",
+]
