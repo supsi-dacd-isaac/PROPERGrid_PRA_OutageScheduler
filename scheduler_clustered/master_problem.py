@@ -26,10 +26,11 @@ class ConflictCut:
 
 @dataclass(frozen=True)
 class NoGoodCut:
-    """Exclude one complete schedule/deferral decision."""
+    """Keep a new schedule a minimum Hamming distance from an old one."""
 
     starts: tuple[tuple[str, str], ...]
     deferred: tuple[str, ...] = ()
+    min_changes: int = 1
     label: str = "exploration"
 
 
@@ -425,8 +426,13 @@ class SchedulingMaster:
                     if outage in self.outages
                 )
             if selected_terms:
+                required_changes = min(
+                    max(1, int(cut.min_changes)),
+                    len(selected_terms),
+                )
                 model.addConstr(
-                    quicksum(selected_terms) <= len(selected_terms) - 1,
+                    quicksum(selected_terms)
+                    <= len(selected_terms) - required_changes,
                     name=f"NoGood_{cut.label}_{cut_index}",
                 )
 
@@ -557,9 +563,13 @@ def no_good_from_solution(
     solution: MasterSolution,
     *,
     label: str = "exploration",
+    min_changes: int = 1,
 ) -> NoGoodCut:
+    if min_changes < 1:
+        raise ValueError("min_changes must be positive.")
     return NoGoodCut(
         starts=tuple(sorted(solution.start_times.items())),
         deferred=tuple(sorted(solution.deferred_outages)),
+        min_changes=int(min_changes),
         label=label,
     )

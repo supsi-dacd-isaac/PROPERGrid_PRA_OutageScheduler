@@ -6,6 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Mapping, Sequence, TypeVar
 import json
+import math
 
 from .data_adapter import augment_for_decomposition, validate_decomposition_data
 
@@ -122,6 +123,17 @@ def apply_data_overrides_from_json(
         if not isinstance(benchmark_slice, Mapping):
             raise ValueError("Configuration section 'benchmark_slice' must be a mapping.")
         apply_benchmark_slice(data, benchmark_slice)
+
+    stress_test = document.get("stress_test")
+    if stress_test is not None:
+        if not isinstance(stress_test, Mapping):
+            raise ValueError("Configuration section 'stress_test' must be a mapping.")
+        multiplier = float(stress_test.get("load_multiplier", 1.0))
+        if not math.isfinite(multiplier) or multiplier <= 0.0:
+            raise ValueError("stress_test.load_multiplier must be finite and positive.")
+        data["nodal_demand"] = data["nodal_demand"].astype(float) * multiplier
+        data["load_multiplier"] = multiplier
+
     validate_decomposition_data(data)
     return data
 

@@ -99,6 +99,7 @@ class ClusteredCVaRConfig:
     absolute_utility_tolerance: float = 0.0
     max_candidates: int = 20
     patience: int = 8
+    min_candidate_changes: int = 1
     full_contingency_validation: bool = True
     results_path: str = "clustered_cvar_results.json"
     iis_path: str = "cluster_cvar_master_infeasibility.ilp"
@@ -279,6 +280,12 @@ class ClusteredCVaRScheduler:
             )
         if self.config.critical_state_count <= 0:
             raise ValueError("critical_state_count must be positive.")
+        outage_count = len(data["names"]["outages"])
+        if not 1 <= self.config.min_candidate_changes <= outage_count:
+            raise ValueError(
+                "min_candidate_changes must be between 1 and the number "
+                f"of planned outages ({outage_count})."
+            )
 
         self.state = MasterState()
         self.oracle = ClusterSCOPFOracle(data)
@@ -417,8 +424,12 @@ class ClusteredCVaRScheduler:
             with self._cache_lock:
                 cached = self._solve_cache.get(key)
             if cached is None:
-                cached = self.oracle.solve(source_time, active_outages, contingencies=contingencies,
-                                           demand_override=demand)
+                cached = self.oracle.solve(
+                    source_time,
+                    active_outages,
+                    contingencies=contingencies,
+                    demand_override=demand,
+                )
                 with self._cache_lock:
                     self._solve_cache[key] = cached
             return cached
@@ -733,7 +744,13 @@ class ClusteredCVaRScheduler:
         if signature in self._seen_schedules:
             return False
         self._seen_schedules.add(signature)
-        self.state.no_goods.append(no_good_from_solution(solution, label=label))
+        self.state.no_goods.append(
+            no_good_from_solution(
+                solution,
+                label=label,
+                min_changes=self.config.min_candidate_changes,
+            )
+        )
         return True
 
     def _save(self, result: ClusteredCVaRResult) -> None:
@@ -776,11 +793,10 @@ class ClusteredCVaRScheduler:
                 "guarantee lower independent validation CVaR."
             ),
         }
-
-        output_path = Path(self.config.results_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(json_safe(serial), indent=2), encoding="utf-8", )
-
+        Path(self.config.results_path).write_text(
+            json.dumps(json_safe(serial), indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
 
     def solve(self) -> ClusteredCVaRResult:
         termination = "iteration_limit"
@@ -805,7 +821,11 @@ class ClusteredCVaRScheduler:
             if not improved:
                 no_improvement += 1
             self.state.no_goods.append(
-                no_good_from_solution(solution, label="benchmark_exploration")
+                no_good_from_solution(
+                    solution,
+                    label="benchmark_exploration",
+                    min_changes=self.config.min_candidate_changes,
+                )
             )
 
         for iteration in range(1, self.config.max_iterations + 1):
