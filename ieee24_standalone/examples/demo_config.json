@@ -1,0 +1,27 @@
+{
+  "tasks": [
+    {"task_id": "line-8", "asset_type": "line", "asset_id": 8, "duration_steps": 1, "earliest_start": 0, "latest_start": 2, "utility": 10, "delay_penalty_per_step": 0.25},
+    {"task_id": "line-6", "asset_type": "line", "asset_id": 6, "duration_steps": 1, "earliest_start": 0, "latest_start": 2, "utility": 10, "delay_penalty_per_step": 0.25}
+  ],
+  "hazard": {
+    "0": {"bearing_deg": 30, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01},
+    "1": {"bearing_deg": 100, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01},
+    "2": {"bearing_deg": 45, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01},
+    "6": {"bearing_deg": 30, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01},
+    "8": {"bearing_deg": 100, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01},
+    "26": {"bearing_deg": 45, "base_rate_per_h": 0.001, "speed_threshold_mps": 8, "speed_slope_per_mps": 0.12, "max_rate_per_h": 0.01}
+  },
+  "settings": {
+    "alpha": 0.5,
+    "tv_radius": 0.15,
+    "max_active": 1,
+    "max_candidates": 3,
+    "utility_tolerance": 0.5,
+    "loss_scale": 1.0,
+    "proxy_gain": 0.01,
+    "redispatch_fraction": 1.0,
+    "deterministic_scenario_id": "calm",
+    "contingency_lines": [0, 1, 2, 6, 8, 26],
+    "contingency_generators": []
+  }
+}
